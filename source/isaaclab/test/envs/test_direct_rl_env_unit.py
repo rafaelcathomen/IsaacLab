@@ -80,7 +80,8 @@ def test_reset_observations(enable_noise: bool, policy_shape: tuple[int, ...], s
         torch.testing.assert_close(env._compute_observations()["policy"], policy)
 
 
-def test_terminal_observations_own_borrowed_storage_before_reset() -> None:
+@pytest.mark.parametrize("composite", [False, True])
+def test_terminal_observations_own_borrowed_storage_before_reset(composite: bool) -> None:
     """Capture reusable task buffers and nested state views before autoreset overwrites them."""
     env = object.__new__(DirectRLEnv)
     env._is_closed = True
@@ -95,14 +96,21 @@ def test_terminal_observations_own_borrowed_storage_before_reset() -> None:
 
     def observations():
         scratch[:, 0] = env.episode_length_buf
-        return {"policy": scratch, "critic": {"length": env.episode_length_buf[:, None]}}
+        state = env.episode_length_buf[:, None]
+        policy = (scratch, {"length": state}) if composite else scratch
+        return {"policy": policy, "critic": {"length": state}}
 
     env._get_observations = observations
     env._reset_idx = lambda ids: env.episode_length_buf.index_fill_(0, ids.long(), 0)
     env._reset_envs_from_buffer()
     live = env._compute_observations()
-    torch.testing.assert_close(live["policy"][:, 0], torch.tensor([0.0, 7.0]))
+    live_policy = live["policy"][0] if composite else live["policy"]
+    torch.testing.assert_close(live_policy[:, 0], torch.tensor([0.0, 7.0]))
     scratch.fill_(-1.0)
     final = env.extras["final_obs"]
-    torch.testing.assert_close(final["policy"][:, 0], torch.tensor([5.0, 7.0]))
+    final_policy = final["policy"][0] if composite else final["policy"]
+    torch.testing.assert_close(final_policy[:, 0], torch.tensor([5.0, 7.0]))
     torch.testing.assert_close(final["critic"]["length"][:, 0], torch.tensor([5, 7]))
+    if composite:
+        assert isinstance(final["policy"], tuple)
+        torch.testing.assert_close(final["policy"][1]["length"][:, 0], torch.tensor([5, 7]))

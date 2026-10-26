@@ -1000,21 +1000,26 @@ def test_preview_includes_current_frame_without_advancing_delay_or_history():
 
 
 @pytest.mark.parametrize(
-    ("modifier_cfg", "expected_preview", "expected_live", "expected_following"),
+    ("modifier_cfg", "dtype", "expected_preview", "expected_live", "expected_following"),
     [
-        (modifiers.IntegratorCfg(dt=1.0), [45.0, 45.0], [45.0, 15.0], [80.0, 50.0]),
-        (modifiers.DigitalFilterCfg(A=[0.0], B=[0.0, 1.0]), [20.0, 20.0], [20.0, 0.0], [30.0, 30.0]),
+        (modifiers.IntegratorCfg(dt=1.0), torch.float32, [45.0, 45.0], [45.0, 15.0], [80.0, 50.0]),
+        (modifiers.IntegratorCfg(dt=1.0), torch.float64, [45.0, 45.0], [45.0, 15.0], [80.0, 50.0]),
+        (modifiers.DigitalFilterCfg(A=[0.0], B=[0.0, 1.0]), torch.float32, [20.0, 20.0], [20.0, 0.0], [30.0, 30.0]),
     ],
-    ids=["integrator", "digital_filter"],
+    ids=["integrator", "integrator_float64_input", "digital_filter"],
 )
 def test_preview_preserves_modifiers_across_partial_reset(
-    modifier_cfg, expected_preview, expected_live, expected_following
+    modifier_cfg, dtype, expected_preview, expected_live, expected_following
 ):
     """Terminal reads must not advance a surviving environment's filter or integrator."""
     cfg = HistoryObservationsCfg()
     cfg.policy.history_length = None
-    cfg.policy.dummy.modifiers = [modifier_cfg]
+    cfg.policy.dummy.modifiers = [
+        modifier_cfg,
+        modifiers.ModifierCfg(func=lambda data: data @ torch.ones(1, 1, dtype=torch.float32)),
+    ]
     env = DummyEnv()
+    env.observation = env.observation.to(dtype)
     manager = ObservationManager(cfg, cast("ManagerBasedEnv", env))
     for value in (10.0, 20.0):
         env.observation.fill_(value)

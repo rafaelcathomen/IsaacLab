@@ -267,4 +267,4 @@ class Integrator(ModifierBase):
 
     def preview(self, data: torch.Tensor) -> torch.Tensor:
         """Integrate a prospective sample without changing the integral or previous sample."""
-        return self.integral + (data + self.y_prev) / 2 * self._cfg.dt
+        return (self.integral + (data + self.y_prev) / 2 * self._cfg.dt).to(self.integral.dtype)
