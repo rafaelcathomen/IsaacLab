@@ -356,7 +356,8 @@ class ObservationManager(ManagerBase):
         Args:
             update_history: Whether to record a new sample in delay and observation history buffers.
             preview: Include the current sample in a prospective history without changing delay/history
-                buffers. Requires ``update_history=False``. Noise and modifiers are still evaluated.
+                buffers. Requires ``update_history=False``. Noise is still evaluated; class-based
+                modifiers must implement :meth:`~isaaclab.utils.modifiers.ModifierBase.preview`.
                 Defaults to False, which reads recorded data without advancing either buffer. For a delay
                 buffer with no sample since initialization or reset, the current observation is returned.
 
@@ -407,7 +408,8 @@ class ObservationManager(ManagerBase):
                 Defaults to False, which reads recorded data without advancing either buffer. For a delay
                 buffer with no sample since initialization or reset, the current observation is returned.
             preview: Include the current sample as if history advanced once, without modifying delay/history
-                storage or counters. Noise and modifiers are still evaluated. Defaults to False.
+                storage or counters. Noise is still evaluated; class-based modifiers must implement
+                :meth:`~isaaclab.utils.modifiers.ModifierBase.preview`. Defaults to False.
 
         Returns:
             Depending on the group's configuration, the tensors for individual observation terms are
@@ -452,7 +454,7 @@ class ObservationManager(ManagerBase):
                     # Custom callbacks may modify or retain their input.
                     obs = obs.clone()
                     if isinstance(modifier.func, modifiers.ModifierBase):
-                        obs = modifier.func(obs)
+                        obs = modifier.func.preview(obs) if preview else modifier.func(obs)
                     else:
                         obs = modifier.func(obs, **modifier.params)
             # Noise callbacks must not modify their input, but may return borrowed storage.

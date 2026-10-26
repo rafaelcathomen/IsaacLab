@@ -92,6 +92,10 @@ Class-based observation terms receive terminal reads through ``preview()`` with
 this flag. Direct environments expose the same flag during terminal observation
 computation. Built-in camera stacks preview the latest frame without advancing
 their live history.
+Class-based modifiers implement ``ModifierBase.preview(data)`` to return the
+prospective filtered sample without changing live state. Built-in integrators
+and digital filters support this contract. Custom modifiers without a preview
+implementation raise an error during terminal capture.
 
 The unified training and playback entrypoints select these wrappers from the
 runner configuration. SuperMimic playback maintains observation history and

@@ -43,6 +43,7 @@ def test_reset_observations(enable_noise: bool, policy_shape: tuple[int, ...], s
     )
     env = object.__new__(DirectRLEnv)
     env._is_closed = True
+    env._is_observation_preview = False
     env.cfg = DirectRLEnvCfg(observation_noise_model=noise_cfg if enable_noise else None)
     env.scene = SimpleNamespace(num_envs=2, reset=lambda ids: None, write_data_to_sim=lambda: None)
     env.sim = SimpleNamespace(
@@ -77,3 +78,31 @@ def test_reset_observations(enable_noise: bool, policy_shape: tuple[int, ...], s
             flat_policy = policy.reshape(2, -1)
             torch.testing.assert_close(flat_policy, flat_policy[:, :1].expand_as(flat_policy))
         torch.testing.assert_close(env._compute_observations()["policy"], policy)
+
+
+def test_terminal_observations_own_borrowed_storage_before_reset() -> None:
+    """Capture reusable task buffers and nested state views before autoreset overwrites them."""
+    env = object.__new__(DirectRLEnv)
+    env._is_closed = True
+    env._is_observation_preview = False
+    env.cfg = DirectRLEnvCfg(compute_final_obs=True)
+    env.scene = SimpleNamespace(num_envs=2)
+    env.sim = SimpleNamespace(device="cpu")
+    env.reset_buf = torch.tensor([True, False])
+    env.episode_length_buf = torch.tensor([5, 7])
+    env.extras = {}
+    scratch = torch.empty(2, 1)
+
+    def observations():
+        scratch[:, 0] = env.episode_length_buf
+        return {"policy": scratch, "critic": {"length": env.episode_length_buf[:, None]}}
+
+    env._get_observations = observations
+    env._reset_idx = lambda ids: env.episode_length_buf.index_fill_(0, ids.long(), 0)
+    env._reset_envs_from_buffer()
+    live = env._compute_observations()
+    torch.testing.assert_close(live["policy"][:, 0], torch.tensor([0.0, 7.0]))
+    scratch.fill_(-1.0)
+    final = env.extras["final_obs"]
+    torch.testing.assert_close(final["policy"][:, 0], torch.tensor([5.0, 7.0]))
+    torch.testing.assert_close(final["critic"]["length"][:, 0], torch.tensor([5, 7]))

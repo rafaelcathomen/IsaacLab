@@ -698,7 +698,13 @@ class DirectRLEnv(gym.Env):
             # apply the same observation noise as the returned obs (policy space only) so the
             # bootstrapped terminal value matches the distribution the policy is trained on.
             if self.cfg.compute_final_obs:
-                self.extras["final_obs"] = self._compute_observations(preview=True)
+                final_obs = self._compute_observations(preview=True)
+                self.extras["final_obs"] = {
+                    group: (
+                        {name: value.clone() for name, value in obs.items()} if isinstance(obs, dict) else obs.clone()
+                    )
+                    for group, obs in final_obs.items()
+                }
             self._reset_idx(reset_env_ids)
         return reset_env_ids
 

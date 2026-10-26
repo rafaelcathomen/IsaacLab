@@ -77,3 +77,22 @@ class ModifierBase(ABC):
             Modified data. Shape is the same as the input data.
         """
         raise NotImplementedError
+
+    def preview(self, data: torch.Tensor) -> torch.Tensor:
+        """Evaluate a prospective sample without changing live modifier state.
+
+        Observation managers use this method for terminal capture before autoreset.
+        Custom modifiers must override it when used with terminal capture. Stateless
+        modifiers may delegate to ``__call__``; stateful modifiers must leave their
+        histories unchanged and return storage independent of that history.
+
+        Args:
+            data: The data to modify, with the same shape as an ordinary sample.
+
+        Returns:
+            The prospective modified sample.
+
+        Raises:
+            NotImplementedError: If a subclass does not support non-mutating previews.
+        """
+        raise NotImplementedError(f"{type(self).__name__} must implement preview() for terminal observation capture")

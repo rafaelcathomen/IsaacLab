@@ -860,6 +860,9 @@ def test_class_modifier_roundtrip_preserves_func_and_params():
     observations = manager.compute()["policy"]
     torch.testing.assert_close(observations, env.observation + 2.0)
 
+    with pytest.raises(NotImplementedError, match="preview"):
+        manager.compute(preview=True)
+
     manager.reset()
     assert prepared_modifier_cfg.func.reset_count == 1
 
@@ -994,6 +997,38 @@ def test_preview_includes_current_frame_without_advancing_delay_or_history():
     env.observation.fill_(40.0)
     following = manager.compute(update_history=True)["policy"]
     torch.testing.assert_close(following["current"], torch.tensor([[20.0, 30.0, 40.0], [30.0, 30.0, 40.0]]))
+
+
+@pytest.mark.parametrize(
+    ("modifier_cfg", "expected_preview", "expected_live", "expected_following"),
+    [
+        (modifiers.IntegratorCfg(dt=1.0), [45.0, 45.0], [45.0, 15.0], [80.0, 50.0]),
+        (modifiers.DigitalFilterCfg(A=[0.0], B=[0.0, 1.0]), [20.0, 20.0], [20.0, 0.0], [30.0, 30.0]),
+    ],
+    ids=["integrator", "digital_filter"],
+)
+def test_preview_preserves_modifiers_across_partial_reset(
+    modifier_cfg, expected_preview, expected_live, expected_following
+):
+    """Terminal reads must not advance a surviving environment's filter or integrator."""
+    cfg = HistoryObservationsCfg()
+    cfg.policy.history_length = None
+    cfg.policy.dummy.modifiers = [modifier_cfg]
+    env = DummyEnv()
+    manager = ObservationManager(cfg, cast("ManagerBasedEnv", env))
+    for value in (10.0, 20.0):
+        env.observation.fill_(value)
+        manager.compute(update_history=True)
+    env.observation.fill_(30.0)
+    terminal = manager.compute(preview=True)["policy"]
+    torch.testing.assert_close(terminal[:, 0], torch.tensor(expected_preview))
+    manager.reset([1])
+    live = manager.compute(update_history=True)["policy"]
+    torch.testing.assert_close(live[:, 0], torch.tensor(expected_live))
+    env.observation.fill_(40.0)
+    following = manager.compute(update_history=True)["policy"]
+    torch.testing.assert_close(following[:, 0], torch.tensor(expected_following))
+    torch.testing.assert_close(terminal[:, 0], torch.tensor(expected_preview))
 
 
 @pytest.mark.parametrize("invalid_default", [False, True])
