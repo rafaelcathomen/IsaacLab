@@ -83,3 +83,48 @@ def test_native_runner_configuration_constructs_the_selected_learner(runner_name
     else:
         assert runner.alg.batch_size == 8 and runner.alg.num_updates == 1
         assert runner.alg.actor.distribution.action_bound.item() == 2
+
+
+@pytest.mark.parametrize("runner_name", ["OffPolicyRunner", "SuperMimicRunner"])
+def test_native_options_added_through_hydra_survive_config_restoration(runner_name, monkeypatch):
+    """Hydra additions reach native dictionaries while ordinary config fields remain strict."""
+    import gymnasium as gym
+
+    from isaaclab.utils import configclass
+
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    @configclass
+    class EnvCfg:
+        seed: int = 42
+
+    cfg_type = RslRlOffPolicyRunnerCfg if runner_name == "OffPolicyRunner" else RslRlSuperMimicRunnerCfg
+
+    @configclass
+    class TaskCfg(cfg_type):
+        algorithm: dict = {"class_name": "SAC"} if runner_name == "OffPolicyRunner" else {}
+
+    cfg = TaskCfg(device="cpu", max_iterations=1, save_interval=1, experiment_name="native_cli")
+    option = "batch_size" if runner_name == "OffPolicyRunner" else "horizon"
+    optional = "final_action_bound" if runner_name == "OffPolicyRunner" else "max_replay_memory_fraction"
+    cfg.algorithm[optional] = None
+    task_name = f"Isaac-Native-{runner_name}-Options-Test"
+    gym.register(id=task_name, entry_point="unused:Env")
+    monkeypatch.setattr(
+        "isaaclab_tasks.utils.parse_cfg.load_cfg_from_registry",
+        lambda task, key: EnvCfg() if key == "env_cfg_entry_point" else cfg.copy(),
+    )
+    try:
+        _, resolved = resolve_task_config(
+            task_name,
+            "rsl_rl_cfg_entry_point",
+            overrides=[f"+agent.algorithm.{option}=16", f"++agent.algorithm.{optional}=0.5"],
+        )
+        assert resolved.algorithm[option] == 16
+        assert resolved.algorithm[optional] == 0.5
+        if runner_name == "OffPolicyRunner":
+            assert resolved.algorithm["class_name"] == "SAC"
+        with pytest.raises(KeyError, match="unknown_runner_field"):
+            resolved.from_dict({"unknown_runner_field": True})
+    finally:
+        del gym.registry[task_name]

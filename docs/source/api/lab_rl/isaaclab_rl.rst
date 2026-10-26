@@ -69,6 +69,13 @@ observation groups with ``obs_groups``. ``wrap_rsl_rl_env(env, agent_cfg)`` enab
 owned final observations for that runner. True terminations take precedence over
 simultaneous timeouts. Terminal history previews include the latest physical
 frame without advancing live delay or history buffers twice.
+Off-policy and model-based collection require the Torch frontend. Warp frontends
+are rejected because they do not supply pre-reset terminal observations or physical
+transition callbacks. Ordinary on-policy Warp collection remains available.
+
+Native model and algorithm dictionaries accept Hydra ``+`` and ``++`` additions.
+Their consumer in RSL-RL validates these options. Fixed-schema configuration fields
+retain their existing validation.
 
 Use ``RslRlSuperMimicRunnerCfg`` with a task-owned ``env_adapter`` factory for
 SuperMimic. The factory receives the Gym environment and returns a
@@ -80,11 +87,20 @@ interval events. Goal advancement belongs to the task; stochastic successors
 must already be chosen when captured. Physical context does not automatically
 become a policy input.
 
+Class-based observation terms receive terminal reads through ``preview()`` with
+``_is_observation_preview`` set for the call. Terms with private history must honor
+this flag. Direct environments expose the same flag during terminal observation
+computation. Built-in camera stacks preview the latest frame without advancing
+their live history.
+
 The unified training and playback entrypoints select these wrappers from the
 runner configuration. SuperMimic playback maintains observation history and
 passes goals separately to the policy. Playback exports its two-input policy to
 TorchScript. The generic observation-only LEAPP export path does not support
 SuperMimic; task-specific exporters remain in the task package.
+When resuming SuperMimic, ``--no-resume_optimizer_state`` retains all learned models,
+task training state and iteration while keeping fresh optimizers. It requires an
+RSL-RL build with ``SuperMimicRunner.load(..., load_optimizer=False)`` support.
 
 .. automodule:: isaaclab_rl.rsl_rl
    :members:

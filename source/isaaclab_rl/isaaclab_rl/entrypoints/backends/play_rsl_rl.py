@@ -127,16 +127,17 @@ def run(argv: list[str]) -> None:
             apply_video_recording(env_cfg, log_dir, args_cli, subdir="play", checkpoint_path=resume_path)
 
             screen.stage("Creating environment")
-            env = create_isaaclab_env(
+            sim_env = create_isaaclab_env(
                 args_cli.task,
                 env_cfg,
                 args_cli,
                 convert_marl_to_single_agent=isinstance(env_cfg, DirectMARLEnvCfg),
             )
-            cleanup.callback(lambda: close_env(env))
+            cleanup.callback(close_env, sim_env)
+            step_dt = sim_env.unwrapped.step_dt
 
             screen.stage("Loading policy")
-            env = wrap_rsl_rl_env(env, agent_cfg)
+            env = wrap_rsl_rl_env(sim_env, agent_cfg)
             print(f"[INFO]: Loading model checkpoint from: {resume_path}")
             runner = create_rsl_rl_runner(env, agent_cfg)
             # configure_seed must run after runner construction so torch determinism does not disturb its initialization
@@ -147,7 +148,7 @@ def run(argv: list[str]) -> None:
                 runner.load(resume_path, policy_only=True)
             else:
                 runner.load(resume_path)
-            policy = runner.get_inference_policy(device=env.unwrapped.device)
+            policy = runner.get_inference_policy(device=env.device)
 
             export_model_dir = os.path.join(log_dir, "exported")
             runner.export_policy_to_jit(path=export_model_dir, filename="policy.pt")
@@ -176,4 +177,4 @@ def run(argv: list[str]) -> None:
                     policy.reset(dones)
 
             screen.close()
-            run_playback(step, dt=env.unwrapped.step_dt, args_cli=args_cli, env_cfg=env_cfg)
+            run_playback(step, dt=step_dt, args_cli=args_cli, env_cfg=env_cfg)

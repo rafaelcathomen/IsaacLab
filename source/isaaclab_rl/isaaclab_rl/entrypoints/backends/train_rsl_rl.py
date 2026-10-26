@@ -162,19 +162,19 @@ def _run(args_cli: argparse.Namespace) -> None:
             apply_video_recording(env_cfg, rank_dir, args_cli)
 
             screen.stage("Creating environment")
-            env = create_isaaclab_env(
+            sim_env = create_isaaclab_env(
                 args_cli.task,
                 env_cfg,
                 args_cli,
                 convert_marl_to_single_agent=isinstance(env_cfg, DirectMARLEnvCfg),
             )
-            cleanup.callback(lambda: close_env(env))
-            env = wrap_sensor_capture(env, rank_dir, args_cli)
+            cleanup.callback(lambda: close_env(sim_env))
+            sim_env = wrap_sensor_capture(sim_env, rank_dir, args_cli)
 
             screen.stage("Preparing agent")
             start_time = time.time()
             report_activity("Wrapping environment")
-            env = wrap_rsl_rl_env(env, agent_cfg)
+            env = wrap_rsl_rl_env(sim_env, agent_cfg)
             report_activity(None)
             report_activity("Building policy")
             runner = create_rsl_rl_runner(env, agent_cfg, log_dir=log_dir)
@@ -189,7 +189,7 @@ def _run(args_cli: argparse.Namespace) -> None:
                 print(f"[INFO]: Loading model checkpoint from: {resume_path}")
                 # map to this process's device; the checkpoint's tensors otherwise land on the GPU that saved them
                 if agent_cfg.class_name == "SuperMimicRunner":
-                    runner.load(resume_path, policy_only=not args_cli.resume_optimizer_state)
+                    runner.load(resume_path, load_optimizer=args_cli.resume_optimizer_state)
                 else:
                     runner.load(
                         resume_path,

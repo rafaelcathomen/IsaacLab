@@ -11,7 +11,9 @@ import contextlib
 from typing import Any
 
 
-def check_env_type(env: Any, *, allow_multi_agent: bool = False, allow_manager_based_env: bool = False) -> None:
+def check_env_type(
+    env: Any, *, allow_multi_agent: bool = False, allow_manager_based_env: bool = False, allow_warp: bool = True
+) -> None:
     """Raise unless the unwrapped environment is a supported Isaac Lab environment.
 
     Supported types are :class:`~isaaclab.envs.ManagerBasedRLEnv` and :class:`~isaaclab.envs.DirectRLEnv`,
@@ -21,6 +23,7 @@ def check_env_type(env: Any, *, allow_multi_agent: bool = False, allow_manager_b
         env: Environment or wrapper exposing ``unwrapped``.
         allow_multi_agent: Whether :class:`~isaaclab.envs.DirectMARLEnv` is supported.
         allow_manager_based_env: Whether the non-RL :class:`~isaaclab.envs.ManagerBasedEnv` is supported.
+        allow_warp: Whether experimental Warp frontends are supported. Defaults to True.
 
     Raises:
         ValueError: If the unwrapped environment is not a supported type.
@@ -36,6 +39,11 @@ def check_env_type(env: Any, *, allow_multi_agent: bool = False, allow_manager_b
     with contextlib.suppress(ImportError):
         from isaaclab_experimental.envs import DirectRLEnvWarp, ManagerBasedEnvWarp, ManagerBasedRLEnvWarp
 
+        if not allow_warp and isinstance(env.unwrapped, (DirectRLEnvWarp, ManagerBasedEnvWarp)):
+            raise ValueError(
+                "Pre-reset RSL-RL collection requires the Torch frontend. Use --frontend torch; "
+                "the Warp frontend does not provide terminal observations or physical transition callbacks."
+            )
         allowed_types += [ManagerBasedRLEnvWarp, DirectRLEnvWarp]
         if allow_manager_based_env:
             allowed_types.append(ManagerBasedEnvWarp)

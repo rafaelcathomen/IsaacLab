@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import MISSING
+from dataclasses import MISSING, field
 from typing import Literal
 
 from isaaclab.utils import configclass
@@ -375,9 +375,10 @@ class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
 
     class_name: str = "OffPolicyRunner"
     num_steps_per_env: int = 1
-    actor: dict = {"class_name": "MLPModel"}
-    critic: dict = {"class_name": "QModel"}
-    algorithm: dict = {"class_name": "SAC"}
+    obs_groups: dict[str, list[str]] = field(default_factory=dict, metadata={"allow_new_keys": True})
+    actor: dict = field(default_factory=lambda: {"class_name": "MLPModel"}, metadata={"allow_new_keys": True})
+    critic: dict = field(default_factory=lambda: {"class_name": "QModel"}, metadata={"allow_new_keys": True})
+    algorithm: dict = field(default_factory=lambda: {"class_name": "SAC"}, metadata={"allow_new_keys": True})
     torch_compile_mode: str | None = None
 
 
@@ -393,8 +394,8 @@ class RslRlSuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     class_name: str = "SuperMimicRunner"
     init_at_random_ep_len: bool = False
     num_steps_per_env: int = 1
-    obs_groups: dict[str, list[str]] = {}
-    algorithm: dict = {}
+    obs_groups: dict[str, list[str]] = field(default_factory=dict, metadata={"allow_new_keys": True})
+    algorithm: dict = field(default_factory=dict, metadata={"allow_new_keys": True})
     env_adapter: Callable | str | None = None
     """Task-owned factory wrapping a Gym environment into ``ModelBasedEnv`` for train/play."""
 

@@ -431,17 +431,20 @@ class ObservationManager(ManagerBase):
 
         # evaluate terms: compute, add noise, clip, scale, custom modifiers
         for term_name, term_cfg in obs_terms:
+            func = term_cfg.func
+            if preview and isinstance(func, ManagerTermBase):
+                func = func.preview
             output_spec = self._term_output_specs.get((group_name, term_name))
             owned = output_spec is not None
             if output_spec is not None:
                 shape, dtype, device = output_spec
                 obs = torch.empty(shape, dtype=dtype, device=device)
-                if term_cfg.func(self._env, **term_cfg.params, out=obs) is not obs:
+                if func(self._env, **term_cfg.params, out=obs) is not obs:
                     raise ValueError(
                         f"Observation term '{group_name}/{term_name}' must return the supplied 'out' tensor."
                     )
             else:
-                obs = term_cfg.func(self._env, **term_cfg.params)
+                obs = func(self._env, **term_cfg.params)
             # apply post-processing
             if term_cfg.modifiers is not None:
                 for modifier in term_cfg.modifiers:

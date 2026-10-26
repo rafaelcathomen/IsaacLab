@@ -44,7 +44,7 @@ class RslRlModelBasedEnvWrapper:
         capture: Callable[[Any, bool], dict[str, torch.Tensor]],
     ) -> None:
         """Reset the environment and attach a collector to its pre-reset step phase."""
-        check_env_type(env)
+        check_env_type(env, allow_warp=False)
         self.env, self.task, self.capture = env, task, capture
         self.num_envs, self.device = self.unwrapped.num_envs, self.unwrapped.device
         if not hasattr(self.unwrapped, "register_pre_reset_callback"):

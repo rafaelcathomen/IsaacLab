@@ -459,7 +459,11 @@ class image_rgb(CameraImageBase):
         out: torch.Tensor | None = None,
     ) -> torch.Tensor:
         images = _read_camera_output(env, sensor_cfg, data_type)[..., :3]
-        result = self._frames(images, functools.partial(normalize_rgb, mean=mean, out=out) if normalize else None)
+        result = self._frames(
+            images,
+            functools.partial(normalize_rgb, mean=mean, out=out) if normalize else None,
+            preview=self._is_observation_preview,
+        )
         if out is None:
             return result
         if result is not out:
@@ -516,7 +520,7 @@ class image_depth(CameraImageBase):
             normalizer = functools.partial(
                 normalize_depth, invalid_value=invalid_value, max_depth=max_depth, tanh_scale=tanh_scale
             )
-        return self._frames(images, normalizer)
+        return self._frames(images, normalizer, preview=self._is_observation_preview)
 
 
 class image_normals(CameraImageBase):
@@ -550,7 +554,7 @@ class image_normals(CameraImageBase):
         frame_stack: int = 1,
     ) -> torch.Tensor:
         images = _read_camera_output(env, sensor_cfg, "normals")
-        return self._frames(images, normalize_normals if normalize else None)
+        return self._frames(images, normalize_normals if normalize else None, preview=self._is_observation_preview)
 
 
 class image_segmentation(CameraImageBase):
@@ -586,7 +590,7 @@ class image_segmentation(CameraImageBase):
         frame_stack: int = 1,
     ) -> torch.Tensor:
         images = _read_camera_output(env, sensor_cfg, data_type)
-        return self._frames(images, normalize_segmentation if normalize else None)
+        return self._frames(images, normalize_segmentation if normalize else None, preview=self._is_observation_preview)
 
 
 class image_features(ManagerTermBase):
@@ -878,7 +882,9 @@ class stacked_image(ManagerTermBase):
     ) -> torch.Tensor:
         images = _read_camera_output(env, sensor_cfg, data_type, convert_perspective_to_orthogonal)
         return self._frames(
-            images, functools.partial(normalize_camera_image, data_type=data_type) if normalize else None
+            images,
+            functools.partial(normalize_camera_image, data_type=data_type) if normalize else None,
+            preview=self._is_observation_preview,
         )
 
 

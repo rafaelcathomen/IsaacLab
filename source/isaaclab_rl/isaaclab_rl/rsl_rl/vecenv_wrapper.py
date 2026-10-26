@@ -60,7 +60,7 @@ class RslRlVecEnvWrapper(VecEnv):
         Raises:
             ValueError: When the environment is not an instance of :class:`ManagerBasedRLEnv` or :class:`DirectRLEnv`.
         """
-        check_env_type(env, allow_manager_based_env=True)
+        check_env_type(env, allow_manager_based_env=not record_final_obs, allow_warp=not record_final_obs)
         self.env = env
         self.clip_actions = clip_actions
         self.record_final_obs = record_final_obs

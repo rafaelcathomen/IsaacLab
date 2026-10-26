@@ -70,7 +70,12 @@ def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool, request: p
         cfg.observations.policy.history_length = 2
         cfg.observations.policy.history_order = "time"
     with launch_simulation(cfg, {"headless": True, "visualizer": ["none"]}):
-        env = gym.make(task, cfg=cfg)
+        if request.node.callspec.params.get("frontend") == "warp":
+            from isaaclab_experimental.envs.frontend import WarpFrontend
+
+            env = WarpFrontend.build_env(cfg, task)
+        else:
+            env = gym.make(task, cfg=cfg)
         try:
             yield env
         finally:
@@ -221,6 +226,23 @@ def test_rsl_rl_wrapper_reports_invalid_unwrapped_type() -> None:
         RslRlVecEnvWrapper(OuterEnv())
 
     assert "OuterEnv" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("task", "finite_horizon", "compute_final_obs", "frontend"),
+    [("Isaac-Cartpole", False, False, "warp"), ("Isaac-Cartpole-Direct", False, False, "warp")],
+)
+def test_off_policy_warp_collection_rejected_before_reset(raw_env, frontend):
+    """Unsupported Warp capture fails before enabling incomplete terminal collection."""
+    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+
+    with pytest.raises(ValueError, match="--frontend torch"):
+        RslRlVecEnvWrapper(raw_env, record_final_obs=True)
+    assert not raw_env.unwrapped.cfg.compute_final_obs
+    ordinary = RslRlVecEnvWrapper(raw_env)
+    obs, rewards, dones, _ = ordinary.step(torch.zeros((_NUM_ENVS, 1), device=ordinary.device))
+    _assert_finite(obs)
+    assert torch.isfinite(rewards).all() and dones.shape == (_NUM_ENVS,)
 
 
 @pytest.mark.parametrize(
