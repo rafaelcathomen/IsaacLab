@@ -966,6 +966,36 @@ def test_observation_delay_config_validation(params, error):
         validate(cfg)
 
 
+def test_preview_includes_current_frame_without_advancing_delay_or_history():
+    """Terminal observations include the successor while live episode history advances once."""
+    import copy
+
+    cfg = HistoryObservationsCfg()
+    cfg.policy.history_length = 3
+    cfg.policy.concatenate_terms = False
+    cfg.policy.current = copy.deepcopy(cfg.policy.dummy)
+    cfg.policy.dummy.delay_min_lag = cfg.policy.dummy.delay_max_lag = 1
+    cfg.policy.dummy.delay_hold_prob = 1.0
+    env = DummyEnv()
+    manager = ObservationManager(cfg, cast("ManagerBasedEnv", env))
+    for value in (10.0, 20.0):
+        env.observation.fill_(value)
+        manager.compute(update_history=True)
+    env.observation.fill_(30.0)
+    manager.reset([1])
+    preview = manager.compute(preview=True)["policy"]
+    expected_current = torch.tensor([[10.0, 20.0, 30.0], [30.0, 30.0, 30.0]])
+    expected_delayed = torch.tensor([[10.0, 10.0, 20.0], [30.0, 30.0, 30.0]])
+    torch.testing.assert_close(preview["current"], expected_current)
+    torch.testing.assert_close(preview["dummy"], expected_delayed)
+    committed = manager.compute(update_history=True)["policy"]
+    torch.testing.assert_close(committed["current"], expected_current)
+    torch.testing.assert_close(committed["dummy"], expected_delayed)
+    env.observation.fill_(40.0)
+    following = manager.compute(update_history=True)["policy"]
+    torch.testing.assert_close(following["current"], torch.tensor([[20.0, 30.0, 40.0], [30.0, 30.0, 40.0]]))
+
+
 @pytest.mark.parametrize("invalid_default", [False, True])
 def test_destination_configuration_rejected(setup_env, invalid_default):
     """Destinations are supplied by the manager and ordinary probing must use out=None."""

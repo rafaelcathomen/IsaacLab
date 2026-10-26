@@ -23,7 +23,7 @@ def _wrap_env(library: str, env: Any, device: str | None = None) -> Any:
     if library == "rsl_rl":
         from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 
-        return RslRlVecEnvWrapper(env)
+        return RslRlVecEnvWrapper(env, record_final_obs=env.unwrapped.cfg.compute_final_obs)
     if library == "rl_games":
         from isaaclab_rl.rl_games import RlGamesVecEnvWrapper
 
@@ -45,7 +45,7 @@ def _wrap_env(library: str, env: Any, device: str | None = None) -> Any:
 
 
 @pytest.fixture
-def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool) -> Iterator[Any]:
+def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool, request: pytest.FixtureRequest) -> Iterator[Any]:
     import gymnasium as gym
     from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 
@@ -60,6 +60,15 @@ def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool) -> Iterato
     cfg.seed = 42
     cfg.is_finite_horizon = finite_horizon
     cfg.compute_final_obs = compute_final_obs
+    if compute_final_obs and request.node.callspec.params.get("library") == "rsl_rl":
+        from isaaclab.managers import TerminationTermCfg
+
+        def simultaneous_failure(env):
+            return (env.episode_length_buf >= _EPISODE_STEPS) & (torch.arange(env.num_envs, device=env.device) == 0)
+
+        cfg.terminations.simultaneous_failure = TerminationTermCfg(func=simultaneous_failure)
+        cfg.observations.policy.history_length = 2
+        cfg.observations.policy.history_order = "time"
     with launch_simulation(cfg, {"headless": True, "visualizer": ["none"]}):
         env = gym.make(task, cfg=cfg)
         try:
@@ -75,6 +84,7 @@ def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool) -> Iterato
     [
         ("rsl_rl", False, "Isaac-Cartpole", None, False),
         ("rsl_rl", True, "Isaac-Cartpole-Direct", None, False),
+        ("rsl_rl", False, "Isaac-Cartpole", None, True),
         ("rl_games", False, "Isaac-Cartpole", None, False),
         ("sb3", False, "Isaac-Cartpole", None, False),
         ("skrl", False, "Isaac-Cartpole-Direct", None, False),
@@ -89,6 +99,20 @@ def test_wrapper_reset_step_and_timeout(
     if library == "sb3":
         assert not raw_env.unwrapped.single_action_space.is_bounded("both")
     env = _wrap_env(library, raw_env, device=wrapper_device)
+    final_frame = {}
+    if library == "rsl_rl" and compute_final_obs:
+        robot = raw_env.unwrapped.scene["robot"]
+
+        def record_physical_frame(raw):
+            final_frame["policy"] = torch.cat(
+                (
+                    robot.data.joint_pos.torch - robot.data.default_joint_pos.torch,
+                    robot.data.joint_vel.torch - robot.data.default_joint_vel.torch,
+                ),
+                dim=-1,
+            ).clone()
+
+        raw_env.unwrapped.register_pre_reset_callback("test_terminal_frame", record_physical_frame)
     if library == "sb3":
         # SB3 sees normalized bounds without modifying the underlying environment.
         np.testing.assert_array_equal(env.action_space.low, -1.0)
@@ -134,7 +158,18 @@ def test_wrapper_reset_step_and_timeout(
                 _assert_observation_buffer(env)
                 assert ("time_outs" in extras[0]) is not finite_horizon
                 if not finite_horizon:
-                    torch.testing.assert_close(extras[0]["time_outs"], raw_env.unwrapped.reset_time_outs)
+                    expected = raw_env.unwrapped.reset_time_outs
+                    if compute_final_obs:
+                        expected = expected & ~raw_env.unwrapped.reset_terminated
+                    torch.testing.assert_close(extras[0]["time_outs"], expected)
+                if compute_final_obs:
+                    assert ("final_obs" in extras[0]) == bool(dones.any())
+                    if bool(dones.any()):
+                        final = extras[0]["final_obs"]["policy"]
+                        assert isinstance(extras[0]["final_obs"], TensorDict)
+                        assert not torch.equal(final, transition[0]["policy"])
+                        torch.testing.assert_close(final.reshape(_NUM_ENVS, 2, 4)[:, -1], final_frame["policy"])
+                        assert extras[0]["time_outs"].tolist() == [False, True]
             elif library == "sb3" and bool(dones.any()):
                 for index in np.flatnonzero(dones):
                     assert extras[0][index]["terminal_observation"] is not None
@@ -186,6 +221,50 @@ def test_rsl_rl_wrapper_reports_invalid_unwrapped_type() -> None:
         RslRlVecEnvWrapper(OuterEnv())
 
     assert "OuterEnv" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("task", "finite_horizon", "compute_final_obs"),
+    [("Isaac-Cartpole", False, False), ("Isaac-Cartpole-Direct", False, False)],
+)
+def test_model_based_wrapper_preserves_pre_reset_state_and_action_history(raw_env: Any) -> None:
+    """Model replay retains physical successors and boundaries through same-step autoreset."""
+    from types import SimpleNamespace
+
+    from isaaclab_rl.rsl_rl import RslRlModelBasedEnvWrapper
+
+    raw = raw_env.unwrapped
+    robot = next(iter(raw.scene.articulations.values()))
+    scratch = torch.empty((_NUM_ENVS, 4), device=raw.device)
+    phases = []
+
+    def capture(env: Any, successor: bool) -> dict:
+        scratch.copy_(torch.cat((robot.data.joint_pos.torch, robot.data.joint_vel.torch), dim=-1))
+        if successor:
+            phases.append(env.episode_length_buf.clone())
+        return {"state": scratch, "xi": scratch[:, :1], "goal_state": scratch[:, :1]}
+
+    task = SimpleNamespace(num_actions=1, representation=SimpleNamespace(unflatten=lambda state: (state,)))
+    env = RslRlModelBasedEnvWrapper(raw_env, task, capture)
+    outputs = []
+    for index in range(_EPISODE_STEPS + 1):
+        before = torch.cat((robot.data.joint_pos.torch, robot.data.joint_vel.torch), dim=-1).clone()
+        previous = env.prev_action.clone()
+        out = env.step(torch.full((_NUM_ENVS, 1), float(index + 1), device=raw.device))
+        torch.testing.assert_close(out["state"], before)
+        torch.testing.assert_close(out["prev_action"], previous)
+        assert out["episode_step"].tolist() == [index % _EPISODE_STEPS] * _NUM_ENVS
+        outputs.append((out, before))
+        if index == _EPISODE_STEPS - 1:
+            assert bool(out["done"].all())
+            assert not torch.equal(out["next_state"], env.state()[0])
+            assert not bool(env.prev_action.any())
+            assert not bool(env.prev_prev_action.any())
+    assert [int(phase[0]) for phase in phases] == [1, 2, 3, 1]
+    scratch.fill_(999)
+    for out, before in outputs:
+        torch.testing.assert_close(out["state"], before)
+    env.close()
 
 
 def _assert_finite(data: Any) -> None:

@@ -345,7 +345,9 @@ class ObservationManager(ManagerBase):
         # nothing to log here
         return {}
 
-    def compute(self, update_history: bool = False) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
+    def compute(
+        self, update_history: bool = False, *, preview: bool = False
+    ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         """Compute the observations per group for all groups.
 
         The method computes the observations for all the groups handled by the observation manager.
@@ -353,6 +355,8 @@ class ObservationManager(ManagerBase):
 
         Args:
             update_history: Whether to record a new sample in delay and observation history buffers.
+            preview: Include the current sample in a prospective history without changing delay/history
+                buffers. Requires ``update_history=False``. Noise and modifiers are still evaluated.
                 Defaults to False, which reads recorded data without advancing either buffer. For a delay
                 buffer with no sample since initialization or reset, the current observation is returned.
 
@@ -365,14 +369,16 @@ class ObservationManager(ManagerBase):
         obs_buffer = dict()
         # iterate over all the terms in each group
         for group_name in self._group_obs_term_names:
-            obs_buffer[group_name] = self.compute_group(group_name, update_history=update_history)
+            obs_buffer[group_name] = self.compute_group(group_name, update_history=update_history, preview=preview)
         # otherwise return a dict with observations of all groups
 
         # Cache the observations.
         self._obs_buffer = obs_buffer
         return obs_buffer
 
-    def compute_group(self, group_name: str, update_history: bool = False) -> torch.Tensor | dict[str, torch.Tensor]:
+    def compute_group(
+        self, group_name: str, update_history: bool = False, *, preview: bool = False
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Computes the observations for a given group.
 
         The observations for a given group are computed by calling the registered functions for each
@@ -400,6 +406,8 @@ class ObservationManager(ManagerBase):
             update_history: Whether to record a new sample in delay and observation history buffers.
                 Defaults to False, which reads recorded data without advancing either buffer. For a delay
                 buffer with no sample since initialization or reset, the current observation is returned.
+            preview: Include the current sample as if history advanced once, without modifying delay/history
+                storage or counters. Noise and modifiers are still evaluated. Defaults to False.
 
         Returns:
             Depending on the group's configuration, the tensors for individual observation terms are
@@ -409,6 +417,8 @@ class ObservationManager(ManagerBase):
         Raises:
             ValueError: If input ``group_name`` is not a valid group handled by the manager.
         """
+        if preview and update_history:
+            raise ValueError("An observation preview cannot also update history")
         if group_name not in self._group_obs_term_names:
             raise ValueError(
                 f"Unable to find the group '{group_name}' in the observation manager."
@@ -461,7 +471,7 @@ class ObservationManager(ManagerBase):
                 owned = True
             if term_name in self._group_obs_term_delay_buffer[group_name]:
                 obs = self._group_obs_term_delay_buffer[group_name][term_name].compute(
-                    obs, update_history=update_history
+                    obs, update_history=update_history, preview=preview
                 )
                 # the delay buffer returns storage independent of its history
                 owned = True
@@ -481,10 +491,12 @@ class ObservationManager(ManagerBase):
                     )
                     circular_buffer.append(obs)
 
-                if term_cfg.flatten_history_dim:
-                    obs = circular_buffer.buffer.reshape(self._env.num_envs, -1)
-                else:
-                    obs = circular_buffer.buffer
+                history = circular_buffer.buffer
+                if preview:
+                    history = torch.cat((history[:, 1:], obs.unsqueeze(1)), dim=1)
+                    fresh = (circular_buffer.current_length == 0).view(self._env.num_envs, *([1] * obs.ndim))
+                    history = torch.where(fresh, obs.unsqueeze(1), history)
+                obs = history.reshape(self._env.num_envs, -1) if term_cfg.flatten_history_dim else history
                 owned = False
             # Secure borrowed storage before another term can overwrite it, including shared scratch buffers.
             group_obs[term_name] = obs if owned else obs.clone()

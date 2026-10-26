@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import MISSING
 from typing import Literal
 
@@ -361,6 +362,41 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
     For rsl-rl >= 4.0.0, this configuration is is deprecated. Please use `actor` and `critic` model configurations
     instead.
     """
+
+
+@configclass
+class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
+    """Native RSL-RL SAC/FlashSAC runner configuration.
+
+    Model and algorithm dictionaries forward native options without duplicating
+    their defaults here. Empty model options select SAC's native residual networks.
+    Use ``RslRlVecEnvWrapper(env, record_final_obs=True)`` for replay collection.
+    """
+
+    class_name: str = "OffPolicyRunner"
+    num_steps_per_env: int = 1
+    actor: dict = {"class_name": "MLPModel"}
+    critic: dict = {"class_name": "QModel"}
+    algorithm: dict = {"class_name": "SAC"}
+    torch_compile_mode: str | None = None
+
+
+@configclass
+class RslRlSuperMimicRunnerCfg(RslRlBaseRunnerCfg):
+    """Native SuperMimic settings for an environment implementing ``ModelBasedEnv``.
+
+    ``algorithm`` forwards ``SuperMimicCfg`` options; omitted options use RSL-RL
+    defaults. The environment supplies a differentiable task and physical state
+    transitions, rather than the ordinary observation-only vector wrapper.
+    """
+
+    class_name: str = "SuperMimicRunner"
+    init_at_random_ep_len: bool = False
+    num_steps_per_env: int = 1
+    obs_groups: dict[str, list[str]] = {}
+    algorithm: dict = {}
+    env_adapter: Callable | str | None = None
+    """Task-owned factory wrapping a Gym environment into ``ModelBasedEnv`` for train/play."""
 
 
 #############################

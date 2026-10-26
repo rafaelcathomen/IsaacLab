@@ -10,6 +10,7 @@ __all__ = [
     "RslRlDistillationStudentTeacherRecurrentCfg",
     "check_rsl_rl_version",
     "create_rsl_rl_runner",
+    "wrap_rsl_rl_env",
     "export_policy_as_jit",
     "export_policy_as_onnx",
     "handle_deprecated_rsl_rl_cfg",
@@ -17,6 +18,9 @@ __all__ = [
     "RslRlCNNModelCfg",
     "RslRlMLPModelCfg",
     "RslRlOnPolicyRunnerCfg",
+    "RslRlOffPolicyRunnerCfg",
+    "RslRlSuperMimicRunnerCfg",
+    "RslRlModelBasedEnvWrapper",
     "RslRlPpoActorCriticCfg",
     "RslRlPpoActorCriticRecurrentCfg",
     "RslRlPpoAlgorithmCfg",
@@ -38,6 +42,8 @@ from .rl_cfg import (
     RslRlCNNModelCfg,
     RslRlMLPModelCfg,
     RslRlOnPolicyRunnerCfg,
+    RslRlOffPolicyRunnerCfg,
+    RslRlSuperMimicRunnerCfg,
     RslRlPpoActorCriticCfg,
     RslRlPpoActorCriticRecurrentCfg,
     RslRlPpoAlgorithmCfg,
@@ -45,5 +51,6 @@ from .rl_cfg import (
 )
 from .rnd_cfg import RslRlRndCfg
 from .symmetry_cfg import RslRlSymmetryCfg
-from .utils import check_rsl_rl_version, create_rsl_rl_runner, handle_deprecated_rsl_rl_cfg
+from .utils import check_rsl_rl_version, create_rsl_rl_runner, handle_deprecated_rsl_rl_cfg, wrap_rsl_rl_env
 from .vecenv_wrapper import RslRlVecEnvWrapper
+from .model_based_wrapper import RslRlModelBasedEnvWrapper

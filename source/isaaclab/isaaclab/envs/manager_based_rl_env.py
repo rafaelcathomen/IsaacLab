@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 import gymnasium as gym
@@ -70,6 +71,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         """
         # -- counter for curriculum
         self.common_step_counter = 0
+        self._pre_reset_callbacks: dict[str, Callable] = {}
 
         # initialize the episode length buffer BEFORE loading the managers to use it in mdp functions.
         self.episode_length_buf = torch.zeros(cfg.scene.num_envs, device=cfg.sim.device, dtype=torch.long)
@@ -104,6 +106,22 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
     """
     Operations - Setup.
     """
+
+    def register_pre_reset_callback(self, name: str, callback: Callable) -> None:
+        """Register a callback after physics/reward evaluation and before any autoreset.
+
+        Called as ``callback(env)`` on every step, including steps with no resets.
+        This permits transition collectors to copy physical successors without
+        recomputing policy observations or changing their history. Callbacks must
+        not mutate the environment. Use distinct names for independent consumers.
+        """
+        if name in self._pre_reset_callbacks:
+            raise ValueError(f"A pre-reset callback named {name!r} is already registered")
+        self._pre_reset_callbacks[name] = callback
+
+    def unregister_pre_reset_callback(self, name: str) -> None:
+        """Remove a previously registered transition callback."""
+        del self._pre_reset_callbacks[name]
 
     def load_managers(self):
         # note: this order is important since observation manager needs to know the command and action managers
@@ -203,6 +221,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             A tuple containing the observations, rewards, resets (terminated and truncated) and extras.
         """
         self.action_manager.process_action(action.to(self.device))
+        self.extras.pop("final_obs", None)
 
         self.recorder_manager.record_pre_step()
 
@@ -233,6 +252,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         self.reset_time_outs = self.termination_manager.time_outs
         self.reward_buf = self.reward_manager.compute(dt=self.step_dt)
 
+        for callback in tuple(self._pre_reset_callbacks.values()):
+            callback(self)
+
         if len(self.recorder_manager.active_terms) > 0:
             # update observations for recording if needed
             self.obs_buf = self.observation_manager.compute()
@@ -243,7 +265,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         if len(reset_env_ids) > 0:
             # capture the terminal observation before reset and expose it for Same-Step autoreset.
             if self.cfg.compute_final_obs:
-                self.extras["final_obs"] = self.observation_manager.compute()
+                self.extras["final_obs"] = self.observation_manager.compute(preview=True)
             self.recorder_manager.record_pre_reset(reset_env_ids)
 
             self._reset_idx(reset_env_ids)

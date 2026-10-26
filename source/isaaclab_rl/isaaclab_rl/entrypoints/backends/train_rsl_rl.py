@@ -26,10 +26,10 @@ from isaaclab_tasks.utils import get_checkpoint_path, resolve_task_config, setup
 
 from ...rsl_rl import (
     RslRlBaseRunnerCfg,
-    RslRlVecEnvWrapper,
     check_rsl_rl_version,
     create_rsl_rl_runner,
     handle_deprecated_rsl_rl_cfg,
+    wrap_rsl_rl_env,
 )
 from ...utils.wandb import announce_new_run, is_wandb_checkpoint, resolve_wandb_checkpoint, resolve_wandb_entity
 from ..common import (
@@ -103,7 +103,9 @@ def _resolve_checkpoint(args_cli: argparse.Namespace, agent_cfg: RslRlBaseRunner
         )
     if args_cli.checkpoint:
         return retrieve_file_path(args_cli.checkpoint)
-    if agent_cfg.algorithm.class_name == "Distillation":
+    algorithm = agent_cfg.algorithm
+    algorithm_name = algorithm.get("class_name") if isinstance(algorithm, dict) else algorithm.class_name
+    if algorithm_name == "Distillation":
         raise ValueError("Distillation training requires --checkpoint.")
     return None
 
@@ -172,7 +174,7 @@ def _run(args_cli: argparse.Namespace) -> None:
             screen.stage("Preparing agent")
             start_time = time.time()
             report_activity("Wrapping environment")
-            env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+            env = wrap_rsl_rl_env(env, agent_cfg)
             report_activity(None)
             report_activity("Building policy")
             runner = create_rsl_rl_runner(env, agent_cfg, log_dir=log_dir)
@@ -186,13 +188,16 @@ def _run(args_cli: argparse.Namespace) -> None:
             if resume_path is not None:
                 print(f"[INFO]: Loading model checkpoint from: {resume_path}")
                 # map to this process's device; the checkpoint's tensors otherwise land on the GPU that saved them
-                runner.load(
-                    resume_path,
-                    load_cfg=cli_args.checkpoint_load_cfg(
-                        args_cli.resume_optimizer_state, runner_class=agent_cfg.class_name
-                    ),
-                    map_location=agent_cfg.device,
-                )
+                if agent_cfg.class_name == "SuperMimicRunner":
+                    runner.load(resume_path, policy_only=not args_cli.resume_optimizer_state)
+                else:
+                    runner.load(
+                        resume_path,
+                        load_cfg=cli_args.checkpoint_load_cfg(
+                            args_cli.resume_optimizer_state, runner_class=agent_cfg.class_name
+                        ),
+                        map_location=agent_cfg.device,
+                    )
             dump_train_configs(rank_dir, env_cfg, agent_cfg)
 
             if agent_cfg.logger == "wandb":

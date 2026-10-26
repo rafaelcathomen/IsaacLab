@@ -11,6 +11,8 @@ import argparse
 import contextlib
 import os
 
+import torch
+
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.envs import DirectMARLEnvCfg
 from isaaclab.utils.assets import retrieve_file_path
@@ -22,10 +24,10 @@ from isaaclab_tasks.utils import get_checkpoint_path, resolve_task_config, setup
 
 from ...rsl_rl import (
     RslRlBaseRunnerCfg,
-    RslRlVecEnvWrapper,
     check_rsl_rl_version,
     create_rsl_rl_runner,
     handle_deprecated_rsl_rl_cfg,
+    wrap_rsl_rl_env,
 )
 from ...utils.wandb import is_wandb_checkpoint, resolve_wandb_checkpoint
 from ..common import (
@@ -134,26 +136,44 @@ def run(argv: list[str]) -> None:
             cleanup.callback(lambda: close_env(env))
 
             screen.stage("Loading policy")
-            env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+            env = wrap_rsl_rl_env(env, agent_cfg)
             print(f"[INFO]: Loading model checkpoint from: {resume_path}")
             runner = create_rsl_rl_runner(env, agent_cfg)
             # configure_seed must run after runner construction so torch determinism does not disturb its initialization
             if args_cli.deterministic:
                 configure_seed(env_cfg.seed, torch_deterministic=True)
-            runner.load(resume_path)
+            model_based = agent_cfg.class_name == "SuperMimicRunner"
+            if model_based:
+                runner.load(resume_path, policy_only=True)
+            else:
+                runner.load(resume_path)
             policy = runner.get_inference_policy(device=env.unwrapped.device)
 
             export_model_dir = os.path.join(log_dir, "exported")
             runner.export_policy_to_jit(path=export_model_dir, filename="policy.pt")
-            runner.export_policy_to_onnx(path=export_model_dir, filename="policy.onnx")
+            if not model_based:
+                runner.export_policy_to_onnx(path=export_model_dir, filename="policy.onnx")
 
-            obs = env.get_observations()
+            if model_based:
+                history = torch.zeros(env.num_envs, env.task.history_length, env.task.obs_dim, device=env.device)
 
-            def step() -> None:
-                nonlocal obs
-                obs, _, dones, _ = env.step(policy(obs))
-                # reset recurrent states for episodes that have terminated
-                policy.reset(dones)
+                def step() -> None:
+                    nonlocal history
+                    task, state = env.task, env.state()
+                    obs = task.obs(state, env.prev_action, env.xi, env.goal_state)
+                    shifted = torch.cat((history[:, 1:], obs[:, None]), dim=1)
+                    history = torch.where(
+                        (env.episode_step == 0)[:, None, None], obs[:, None].expand_as(shifted), shifted
+                    )
+                    env.step(policy(history, task.policy_goal(state, env.goal_state)))
+            else:
+                obs = env.get_observations()
+
+                def step() -> None:
+                    nonlocal obs
+                    obs, _, dones, _ = env.step(policy(obs))
+                    # reset recurrent states for episodes that have terminated
+                    policy.reset(dones)
 
             screen.close()
             run_playback(step, dt=env.unwrapped.step_dt, args_cli=args_cli, env_cfg=env_cfg)

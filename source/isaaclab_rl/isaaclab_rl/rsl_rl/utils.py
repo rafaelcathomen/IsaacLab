@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import inspect
 from dataclasses import MISSING
@@ -26,9 +27,11 @@ from .rl_cfg import (
     RslRlPpoAlgorithmCfg,
     RslRlRNNModelCfg,
 )
+from .vecenv_wrapper import RslRlVecEnvWrapper
 
 if TYPE_CHECKING:
-    from rsl_rl.env import VecEnv
+    from rsl_rl.env import ModelBasedEnv, VecEnv
+    from rsl_rl.runners import OffPolicyRunner, SuperMimicRunner
 
 RSL_RL_MIN_VERSION = "5.0.1"
 """Oldest rsl-rl-lib release supported by the entrypoints."""
@@ -56,8 +59,8 @@ def check_rsl_rl_version() -> str:
 
 
 def create_rsl_rl_runner(
-    env: VecEnv, agent_cfg: RslRlBaseRunnerCfg, log_dir: str | None = None
-) -> OnPolicyRunner | DistillationRunner:
+    env: VecEnv | ModelBasedEnv, agent_cfg: RslRlBaseRunnerCfg, log_dir: str | None = None
+) -> OnPolicyRunner | DistillationRunner | OffPolicyRunner | SuperMimicRunner:
     """Instantiate the RSL-RL runner selected by ``agent_cfg.class_name``.
 
     Args:
@@ -67,12 +70,45 @@ def create_rsl_rl_runner(
 
     Raises:
         ValueError: If the configured runner class is not supported.
+        ImportError: If the installed RSL-RL build does not include the selected native runner.
     """
     if agent_cfg.class_name == "OnPolicyRunner":
         return OnPolicyRunner(env, to_dict(agent_cfg), log_dir=log_dir, device=agent_cfg.device)
     if agent_cfg.class_name == "DistillationRunner":
         return DistillationRunner(env, to_dict(agent_cfg), log_dir=log_dir, device=agent_cfg.device)
+    if agent_cfg.class_name in ("OffPolicyRunner", "SuperMimicRunner"):
+        runners = importlib.import_module("rsl_rl.runners")
+        try:
+            runner_class = getattr(runners, agent_cfg.class_name)
+        except AttributeError as exc:
+            raise ImportError(
+                f"{agent_cfg.class_name} requires an RSL-RL build containing that runner. "
+                "Install the corresponding branch of https://github.com/rafaelcathomen/rsl_rl."
+            ) from exc
+        cfg = to_dict(agent_cfg)
+        cfg.pop("env_adapter", None)
+        return runner_class(env, cfg, log_dir=log_dir, device=agent_cfg.device)
     raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+
+
+def wrap_rsl_rl_env(env: Any, agent_cfg: RslRlBaseRunnerCfg) -> Any:
+    """Select observation replay or task-owned physical transitions for the configured runner."""
+    if agent_cfg.class_name == "SuperMimicRunner":
+        adapter = getattr(agent_cfg, "env_adapter", None)
+        if adapter is None:
+            if not hasattr(env, "task") or not callable(getattr(env, "state", None)):
+                raise ValueError("SuperMimic needs a ModelBasedEnv or a task-owned env_adapter factory")
+            return env
+        if isinstance(adapter, str):
+            from isaaclab.utils.string import string_to_callable
+
+            adapter = string_to_callable(adapter)
+        return adapter(env)
+    return RslRlVecEnvWrapper(
+        env,
+        clip_actions=agent_cfg.clip_actions,
+        record_final_obs=agent_cfg.class_name == "OffPolicyRunner",
+    )
 
 
 def handle_deprecated_rsl_rl_cfg(agent_cfg: RslRlBaseRunnerCfg, installed_version: str) -> RslRlBaseRunnerCfg:
@@ -299,6 +335,8 @@ def _validate_old_stochastic_cfg(model_cfg: Any) -> None:
 
 def _update_distribution_cfg(model_cfg: Any) -> None:
     """Migrate the legacy stochastic parameters to ``distribution_cfg`` for rsl-rl >= 5.0.0."""
+    if isinstance(model_cfg, dict):
+        return
     if model_cfg.distribution_cfg is None and model_cfg.stochastic is True:
         # a stochastic output was requested through the legacy parameters
         print(

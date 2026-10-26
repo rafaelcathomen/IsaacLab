@@ -55,6 +55,37 @@ RL-Games Wrapper
 RSL-RL Wrapper
 --------------
 
+Native off-policy and model-based runners
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The runner factory supports PPO, distillation, native SAC/FlashSAC and SuperMimic.
+The selected runner must be present in the installed RSL-RL build. The native
+algorithm implementations live in the corresponding branches of
+`rafaelcathomen/rsl_rl <https://github.com/rafaelcathomen/rsl_rl>`_. Isaac Lab
+forwards algorithm dictionaries so omitted options retain the library defaults.
+
+Use ``RslRlOffPolicyRunnerCfg`` for SAC and select actor and privileged critic
+observation groups with ``obs_groups``. ``wrap_rsl_rl_env(env, agent_cfg)`` enables
+owned final observations for that runner. True terminations take precedence over
+simultaneous timeouts. Terminal history previews include the latest physical
+frame without advancing live delay or history buffers twice.
+
+Use ``RslRlSuperMimicRunnerCfg`` with a task-owned ``env_adapter`` factory for
+SuperMimic. The factory receives the Gym environment and returns a
+``ModelBasedEnv``. ``RslRlModelBasedEnvWrapper`` supplies physical collection for
+manager-based and direct RL environments. Its task-owned capture function returns
+flat physical state, privileged context and exogenous goals. Successor captures
+run after physics and reward evaluation, before autoreset, command updates and
+interval events. Goal advancement belongs to the task; stochastic successors
+must already be chosen when captured. Physical context does not automatically
+become a policy input.
+
+The unified training and playback entrypoints select these wrappers from the
+runner configuration. SuperMimic playback maintains observation history and
+passes goals separately to the policy. Playback exports its two-input policy to
+TorchScript. The generic observation-only LEAPP export path does not support
+SuperMimic; task-specific exporters remain in the task package.
+
 .. automodule:: isaaclab_rl.rsl_rl
    :members:
    :imported-members:
