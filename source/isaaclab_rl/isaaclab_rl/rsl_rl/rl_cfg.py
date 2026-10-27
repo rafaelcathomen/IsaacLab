@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from dataclasses import MISSING
+from dataclasses import MISSING, field
 from typing import Literal
 
 from isaaclab.utils import configclass
@@ -319,3 +319,21 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
 
     torch_compile_mode: Literal["default", "max-autotune-no-cudagraphs"] | None = None
     """The :func:`torch.compile` mode for actor and critic. Defaults to None (disabled)."""
+
+
+@configclass
+class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the native RSL-RL off-policy runner.
+
+    The model and algorithm dictionaries forward native RSL-RL options without duplicating their defaults here; empty
+    model options select the algorithm's native networks. The environment is wrapped with
+    ``RslRlVecEnvWrapper(env, record_final_obs=True)``, so time-outs bootstrap from the true terminal observations.
+    """
+
+    class_name: str = "OffPolicyRunner"
+    num_steps_per_env: int = 1
+    obs_groups: dict[str, list[str]] = field(default_factory=dict, metadata={"allow_new_keys": True})
+    actor: dict = field(default_factory=lambda: {"class_name": "MLPModel"}, metadata={"allow_new_keys": True})
+    critic: dict = field(default_factory=lambda: {"class_name": "QModel"}, metadata={"allow_new_keys": True})
+    algorithm: dict = field(default_factory=lambda: {"class_name": "SAC"}, metadata={"allow_new_keys": True})
+    torch_compile_mode: str | None = None

@@ -15,11 +15,9 @@ import time
 from datetime import datetime
 
 import torch.distributed as dist
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 from isaaclab.app import add_launcher_args, launch_simulation, report_activity
 from isaaclab.envs import DirectMARLEnvCfg
-from isaaclab.utils import to_dict
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.string import list_intersection
@@ -27,7 +25,7 @@ from isaaclab.utils.string import list_intersection
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path, resolve_task_config, setup_preset_cli
 
-from ...rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
+from ...rsl_rl import RslRlBaseRunnerCfg, create_rsl_rl_runner, wrap_rsl_rl_env
 from ...utils.wandb import announce_new_run, is_wandb_checkpoint, resolve_wandb_checkpoint, resolve_wandb_entity
 from ..common import (
     CHECKPOINT_SELECTORS,
@@ -103,7 +101,8 @@ def _resolve_checkpoint(args_cli: argparse.Namespace, agent_cfg: RslRlBaseRunner
         )
     if args_cli.checkpoint:
         return retrieve_file_path(args_cli.checkpoint)
-    if agent_cfg.algorithm.class_name == "Distillation":
+    algorithm = agent_cfg.algorithm
+    if (algorithm.get("class_name") if isinstance(algorithm, dict) else algorithm.class_name) == "Distillation":
         raise ValueError("Distillation training requires --checkpoint.")
     return None
 
@@ -167,15 +166,10 @@ def _run(args_cli: argparse.Namespace) -> None:
             screen.stage("Preparing agent")
             start_time = time.time()
             report_activity("Wrapping environment")
-            env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+            env = wrap_rsl_rl_env(env, agent_cfg)
             report_activity(None)
             report_activity("Building policy")
-            if agent_cfg.class_name == "OnPolicyRunner":
-                runner = OnPolicyRunner(env, to_dict(agent_cfg), log_dir=log_dir, device=agent_cfg.device)
-            elif agent_cfg.class_name == "DistillationRunner":
-                runner = DistillationRunner(env, to_dict(agent_cfg), log_dir=log_dir, device=agent_cfg.device)
-            else:
-                raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+            runner = create_rsl_rl_runner(env, agent_cfg, log_dir=log_dir)
             report_activity(None)
 
             # configure_seed must run after runner construction so torch determinism does not disturb its initialization
