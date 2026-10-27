@@ -60,7 +60,7 @@ def create_rsl_rl_runner(
         agent_cfg: The runner configuration.
         log_dir: The log directory of training runs.
         inference: Whether the runner only loads and runs a policy (playback, export). Off-policy runners then
-            allocate the smallest replay buffer instead of the training one.
+            allocate the smallest replay buffer and disable training-only CUDA graphs.
 
     Raises:
         ValueError: If the configured runner class is not supported.
@@ -73,6 +73,8 @@ def create_rsl_rl_runner(
     cfg.pop("env_adapter", None)
     if inference and agent_cfg.class_name in OFF_POLICY_RUNNERS:
         cfg["algorithm"]["replay_buffer_size"] = env.num_envs * cfg["algorithm"].get("n_steps", 3)
+        if cfg["algorithm"].get("use_cuda_graph"):
+            cfg["algorithm"]["use_cuda_graph"] = False
     runners = importlib.import_module("rsl_rl.runners")
     if agent_cfg.class_name not in ("OnPolicyRunner", "DistillationRunner", "SuperMimicRunner", *OFF_POLICY_RUNNERS):
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
