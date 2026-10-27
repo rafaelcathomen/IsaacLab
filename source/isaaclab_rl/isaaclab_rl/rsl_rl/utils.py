@@ -75,8 +75,8 @@ def resolve_sac_action_bounds(env: RslRlVecEnvWrapper, agent_cfg: RslRlBaseRunne
 
     The bounds are in the raw action coordinates accepted by the environment. With ``action_mapping="to_limits"``,
     the dimensions of :class:`~isaaclab.envs.mdp.actions.JointPositionToLimitsAction` terms with
-    ``rescale_to_limits`` get the bound ``1 / scale`` (the term scales, clips to [-1, 1], and rescales to the joint
-    limits, so the squashed action then sweeps exactly the joint limits). All other dimensions keep the scalar
+    ``rescale_to_limits`` get the bound ``1 / abs(scale)``. The term scales, clips to [-1, 1], and rescales to the joint
+    limits, so the squashed action sweeps exactly the joint limits. All other dimensions keep the scalar
     ``algorithm["action_bound"]``. Environments without to-limits terms, or without an action manager, keep the scalar
     bound unchanged.
 
@@ -101,7 +101,9 @@ def resolve_sac_action_bounds(env: RslRlVecEnvWrapper, agent_cfg: RslRlBaseRunne
                     raise ValueError(f"The to-limits mapping does not support the clipped action term '{name}'.")
                 scale = term._scale[0] if isinstance(term._scale, torch.Tensor) else term._scale
                 scale = torch.as_tensor(scale, dtype=torch.float).expand(term.action_dim)
-                bounds += (1.0 / scale).tolist()
+                if not torch.isfinite(scale).all() or (scale == 0).any():
+                    raise ValueError(f"The to-limits action term '{name}' requires finite, nonzero scales.")
+                bounds += scale.abs().reciprocal().tolist()
                 has_to_limits = True
             else:
                 bounds += [float(bound)] * term.action_dim
@@ -109,8 +111,15 @@ def resolve_sac_action_bounds(env: RslRlVecEnvWrapper, agent_cfg: RslRlBaseRunne
             algorithm["action_bound"] = bounds
             algorithm["action_offset"] = [0.0] * len(bounds)
     if agent_cfg.clip_actions is not None:
-        widest = max(algorithm.get("action_bound", 2.0)) if isinstance(algorithm.get("action_bound"), list) else bound
+        bounds = torch.as_tensor(algorithm.get("action_bound", 2.0))
+        final_bound = algorithm.get("final_action_bound")
+        if final_bound is not None:
+            bounds = torch.maximum(bounds, torch.as_tensor(final_bound))
+        offsets = algorithm.get("action_offset")
+        offsets = torch.as_tensor(0.0 if offsets is None else offsets)
+        widest = (bounds + offsets.abs()).max().item()
         if agent_cfg.clip_actions < widest:
             raise ValueError(
-                f"clip_actions={agent_cfg.clip_actions} would truncate SAC's action range (bound {widest}); unset it."
+                f"clip_actions={agent_cfg.clip_actions} would truncate SAC's action range "
+                f"(maximum magnitude {widest}); unset it."
             )

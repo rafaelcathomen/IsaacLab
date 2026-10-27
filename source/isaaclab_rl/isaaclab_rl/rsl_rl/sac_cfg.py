@@ -36,8 +36,8 @@ class RslRlSacRunnerCfg(RslRlOffPolicyRunnerCfg):
     """Per-dimension action bounds resolved from the environment's action terms before the runner is created.
 
     * ``"to_limits"``: the actions of :class:`~isaaclab.envs.mdp.actions.JointPositionToLimitsAction` terms with
-      ``rescale_to_limits`` get the bound ``1 / scale``, so the squashed action sweeps exactly the joint limits; all
-      other dimensions keep the scalar ``algorithm["action_bound"]``. Environments without an action manager keep the
+      ``rescale_to_limits`` get the bound ``1 / abs(scale)``, so the squashed action sweeps exactly the joint limits.
+      Other dimensions keep the scalar ``algorithm["action_bound"]``. Environments without an action manager keep the
       scalar bound.
     * ``"none"``: the scalar ``algorithm["action_bound"]`` for every dimension.
     """
