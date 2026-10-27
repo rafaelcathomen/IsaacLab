@@ -45,7 +45,7 @@ def _wrap_env(library: str, env: Any, device: str | None = None) -> Any:
 
 
 @pytest.fixture
-def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool) -> Iterator[Any]:
+def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool, request: pytest.FixtureRequest) -> Iterator[Any]:
     import gymnasium as gym
     from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 
@@ -60,6 +60,13 @@ def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool) -> Iterato
     cfg.seed = 42
     cfg.is_finite_horizon = finite_horizon
     cfg.compute_final_obs = compute_final_obs
+    if request.node.callspec.params.get("library") == "rsl_rl" and task == "Isaac-Cartpole" and not finite_horizon:
+        from isaaclab.managers import TerminationTermCfg
+
+        def simultaneous_failure(env):
+            return (env.episode_length_buf >= _EPISODE_STEPS) & (torch.arange(env.num_envs, device=env.device) == 0)
+
+        cfg.terminations.simultaneous_failure = TerminationTermCfg(func=simultaneous_failure)
     with launch_simulation(cfg):
         env = gym.make(task, cfg=cfg)
         try:
@@ -84,7 +91,7 @@ def raw_env(task: str, finite_horizon: bool, compute_final_obs: bool) -> Iterato
     ],
 )
 def test_wrapper_reset_step_and_timeout(
-    library: str, finite_horizon: bool, wrapper_device: str | None, compute_final_obs: bool, raw_env: Any
+    library: str, finite_horizon: bool, task: str, wrapper_device: str | None, compute_final_obs: bool, raw_env: Any
 ) -> None:
     if library == "sb3":
         assert not raw_env.unwrapped.single_action_space.is_bounded("both")
@@ -134,7 +141,11 @@ def test_wrapper_reset_step_and_timeout(
                 _assert_observation_buffer(env)
                 assert ("time_outs" in extras[0]) is not finite_horizon
                 if not finite_horizon:
-                    torch.testing.assert_close(extras[0]["time_outs"], raw_env.unwrapped.reset_time_outs)
+                    torch.testing.assert_close(
+                        extras[0]["time_outs"], raw_env.unwrapped.reset_time_outs & ~raw_env.unwrapped.reset_terminated
+                    )
+                    if bool(dones.any()) and task == "Isaac-Cartpole":
+                        assert not extras[0]["time_outs"][0] and extras[0]["time_outs"][1]
             elif library == "sb3" and bool(dones.any()):
                 for index in np.flatnonzero(dones):
                     assert extras[0][index]["terminal_observation"] is not None
