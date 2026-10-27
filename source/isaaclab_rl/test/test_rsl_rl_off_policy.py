@@ -87,8 +87,8 @@ def test_sac_configuration_defaults():
 
 
 def test_to_limits_mapping_sets_per_dimension_bounds():
-    """To-limits terms get the bound 1/scale, other terms the scalar bound, in the action manager's order."""
-    manager = _action_manager([None, 0.5, torch.tensor([[0.25, 1.0]])], [2, 1, 2])
+    """To-limits bounds cover the joint range regardless of scale direction, in action-manager order."""
+    manager = _action_manager([None, -0.5, torch.tensor([[0.25, -1.0]])], [2, 1, 2])
     cfg = RslRlSacRunnerCfg(**COMMON, obs_groups={"actor": ["policy"], "critic": ["policy"]})
     cfg.algorithm.update(SMALL_SAC)
     env = _env(num_actions=5, action_manager=manager)
@@ -114,6 +114,34 @@ def test_mapping_rejects_unsupported_settings():
         resolve_sac_action_bounds(_env(action_manager=manager), RslRlSacRunnerCfg(**COMMON))
     with pytest.raises(ValueError, match="truncate"):
         resolve_sac_action_bounds(_env(), RslRlSacRunnerCfg(**COMMON, clip_actions=1.0))
+    manager = _action_manager([0.0], [1])
+    with pytest.raises(ValueError, match="finite, nonzero"):
+        resolve_sac_action_bounds(_env(action_manager=manager), RslRlSacRunnerCfg(**COMMON))
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "clip_actions", "rejected"),
+    [
+        ({"action_bound": [1.0], "action_offset": [2.0]}, 2.0, True),
+        ({"action_bound": (1.0,), "action_offset": (-2.0,)}, 3.0, False),
+        ({"action_bound": 1.0, "final_action_bound": 3.0}, 2.0, True),
+    ],
+)
+def test_action_clipping_covers_affine_and_scheduled_support(algorithm, clip_actions, rejected):
+    """Clipping must contain the full mapped range, including offsets and scheduled bounds."""
+    cfg = RslRlSacRunnerCfg(
+        **COMMON,
+        action_mapping="none",
+        clip_actions=clip_actions,
+        obs_groups={"actor": ["policy"], "critic": ["policy"]},
+    )
+    cfg.algorithm.update({**SMALL_SAC, **algorithm})
+    if rejected:
+        with pytest.raises(ValueError, match="truncate"):
+            create_rsl_rl_runner(_env(), cfg)
+    else:
+        runner = create_rsl_rl_runner(_env(), cfg)
+        torch.testing.assert_close(runner.alg.actor.distribution.action_offset, torch.tensor([-2.0]))
 
 
 def test_inference_runner_allocates_a_minimal_replay_buffer():
