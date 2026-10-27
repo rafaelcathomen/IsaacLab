@@ -145,11 +145,13 @@ def test_action_clipping_covers_affine_and_scheduled_support(algorithm, clip_act
 
 
 def test_inference_runner_allocates_a_minimal_replay_buffer():
-    """Playback and export construct SAC without the training replay buffer."""
+    """CPU playback and export omit the training replay allocation and CUDA graphs."""
     cfg = RslRlSacRunnerCfg(**COMMON, obs_groups={"actor": ["policy"], "critic": ["policy"]})
-    cfg.algorithm.update({**SMALL_SAC, "replay_buffer_size": 10_000_000})
+    cfg.algorithm["replay_buffer_size"] = 10_000_000
     runner = create_rsl_rl_runner(_env(), cfg, inference=True)
     assert runner.alg.storage.num_slots == 3
+    assert not runner.alg.use_cuda_graph
+    assert cfg.algorithm["use_cuda_graph"]
 
 
 def test_native_options_added_through_hydra_survive_config_restoration(monkeypatch):
