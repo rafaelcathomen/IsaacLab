@@ -180,6 +180,36 @@ so loading a policy for playback does not allocate the training replay.
 Use the same agent entry point with the playback and export commands. Published
 ``pretrained`` checkpoints are available only for the default agent entry point.
 
+Training the G1 velocity task with SuperMimic
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+SuperMimic uses the same G1 velocity MDP with noise-free physical observation groups.
+Select its agent and the shared ``state_obs`` observation preset together:
+
+.. code-block:: bash
+
+   uv run python scripts/reinforcement_learning/train.py --rl_library rsl_rl \
+      --task Isaac-Velocity-Flat-G1 --agent rsl_rl_supermimic_cfg_entry_point \
+      presets=state_obs physics=newton_mjwarp visualizer=none
+
+The agent configuration enables ``final_obs_every_step`` before environment creation.
+These observations describe the physical transition before resets, command resampling
+and interval pushes. The environment signals this capture explicitly. SuperMimic cuts
+world-model training windows at continuing-state edits and retains the physical successor.
+
+The differentiable velocity task owns the state coordinates, deployable actor features,
+reward terms and contact probabilities. Joint torque rewards use a PD approximation.
+Acceleration rewards use policy-rate differences. Contact timers advance analytically
+at the policy timestep using predicted event labels. The per-term manager parity test
+records tolerances for these approximations. The first supported learning preset is G1.
+
+The standard runner collects one step before applying the algorithm's fractional update
+debt. Full resume restores the actor, critic, world model and learner counters; replay
+warms up again. ``--no-resume_optimizer_state`` retains fresh optimizer state.
+Native JIT and ONNX exports take explicit deployable ``obs_history`` and ``goal`` inputs.
+Deployment constructs these features and maintains history. LEAPP capture currently
+requires an MLPModel policy and rejects this task-specific actor representation.
+
 .. _Stable-Baselines3: https://stable-baselines3.readthedocs.io/en/master/
 .. _RL-Games: https://github.com/Denys88/rl_games
 .. _RSL-RL: https://github.com/leggedrobotics/rsl_rl
