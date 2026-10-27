@@ -181,7 +181,7 @@ Use the same agent entry point with the playback and export commands. Published
 ``pretrained`` checkpoints are available only for the default agent entry point.
 
 Training the G1 velocity task with SuperMimic
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 SuperMimic uses the same G1 velocity MDP with noise-free physical observation groups.
 Select its agent and the shared ``state_obs`` observation preset together:
