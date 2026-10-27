@@ -100,7 +100,7 @@ dictionary, so you can manually specify alternate configuration instances.
 The Code Execution
 ------------------
 
-Since for the cartpole balancing task, RSL-RL library offers two configuration instances,
+Since the cartpole balancing task offers several RSL-RL configuration instances,
 we can use the ``--agent`` argument to specify the configuration instance to use.
 
 * Training with the standard PPO configuration:
@@ -149,6 +149,36 @@ Installed downstream tasks are discovered through the ``isaaclab.tasks`` entry-p
 Custom launchers can call ``isaaclab.cli.load_external_tasks()`` before looking up task IDs,
 as the built-in CLI and direct RL workers do. A package that fails to import is reported with a
 warning instead of stopping discovery.
+
+Training the G1 velocity task with SAC
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The existing ``Isaac-Velocity-Flat-G1`` task provides a SAC agent entry point.
+Its configuration writes out the FlashSAC recipe, including residual BatchNorm
+networks, categorical critics, held exploration and return scaling. The environment's
+rewards, commands and events are shared with its default PPO agent.
+
+.. code-block:: bash
+
+   uv run python scripts/reinforcement_learning/train.py --rl_library rsl_rl \
+      --task Isaac-Velocity-Flat-G1 --agent rsl_rl_sac_cfg_entry_point \
+      physics=newton_mjwarp visualizer=none
+
+The preset collects eight steps per environment and performs 64 updates per iteration.
+The actor's ``action_range`` specifies bounds in the raw coordinates accepted by the
+environment. ``clip_actions=None`` preserves that range.
+
+:class:`~isaaclab_rl.rsl_rl.RslRlSacRunnerCfg` enables ``compute_final_obs`` before
+creating the environment. The vector wrapper forwards the owned pre-reset observations
+for replay, including timeouts. Its normal observation return still describes the
+current state after autoreset.
+
+``agent.algorithm.use_cuda_graph`` controls SAC update capture. It is independent
+of the runner's ``torch_compile_mode``. Replay allocation and graph capture are lazy,
+so loading a policy for playback does not allocate the training replay.
+
+Use the same agent entry point with the playback and export commands. Published
+``pretrained`` checkpoints are available only for the default agent entry point.
 
 .. _Stable-Baselines3: https://stable-baselines3.readthedocs.io/en/master/
 .. _RL-Games: https://github.com/Denys88/rl_games
