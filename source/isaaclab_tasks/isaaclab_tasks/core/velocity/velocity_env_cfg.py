@@ -190,6 +190,56 @@ class ObservationsCfg:
 
 
 @configclass
+class StateObservationsCfg(ObservationsCfg):
+    """Velocity observations with noise-free physical state and contact labels."""
+
+    @configclass
+    class StateCfg(ObsGroup):
+        state = ObsTerm(func=mdp.VelocityState)
+        enable_corruption = False
+
+    @configclass
+    class GoalCfg(ObsGroup):
+        command = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
+        enable_corruption = False
+
+    @configclass
+    class ContextCfg(ObsGroup):
+        mass = ObsTerm(func=mdp.velocity_context)
+        enable_corruption = False
+
+    @configclass
+    class LabelsCfg(ObsGroup):
+        contacts = ObsTerm(func=mdp.VelocityLabels)
+        enable_corruption = False
+
+    @configclass
+    class PreviousActionCfg(ObsGroup):
+        action = ObsTerm(func=mdp.last_action)
+        enable_corruption = False
+
+    @configclass
+    class PreviousPreviousActionCfg(ObsGroup):
+        action = ObsTerm(func=mdp.previous_velocity_action)
+        enable_corruption = False
+
+    state: StateCfg = StateCfg()
+    goal: GoalCfg = GoalCfg()
+    context: ContextCfg = ContextCfg()
+    labels: LabelsCfg = LabelsCfg()
+    prev_action: PreviousActionCfg = PreviousActionCfg()
+    prev_prev_action: PreviousPreviousActionCfg = PreviousPreviousActionCfg()
+
+
+@configclass
+class VelocityObservationsCfg(PresetCfg):
+    """Keep existing policy observations by default; opt into model-based state."""
+
+    default: ObservationsCfg = ObservationsCfg()
+    state_obs: StateObservationsCfg = StateObservationsCfg()
+
+
+@configclass
 class EventsCfg:
     """Configuration for events."""
 
@@ -340,7 +390,7 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
     # Scene settings
     scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
-    observations: ObservationsCfg = ObservationsCfg()
+    observations: VelocityObservationsCfg = VelocityObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
     # MDP settings

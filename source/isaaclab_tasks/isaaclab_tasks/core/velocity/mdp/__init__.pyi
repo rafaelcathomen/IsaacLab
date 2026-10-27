@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
+    "VelocityLabels",
+    "VelocityState",
     "feet_air_time",
     "feet_air_time_positive_biped",
     "feet_air_time_variance",
@@ -13,6 +15,8 @@ __all__ = [
     "terrain_out_of_bounds",
     "track_ang_vel_z_world_exp",
     "track_lin_vel_xy_yaw_frame_exp",
+    "previous_velocity_action",
+    "velocity_context",
 ]
 
 from .curriculums import terrain_levels_vel
@@ -28,3 +32,4 @@ from .rewards import (
 from .terminations import terrain_out_of_bounds
 
 from isaaclab.envs.mdp import *
+from .observations import VelocityLabels, VelocityState, previous_velocity_action, velocity_context
