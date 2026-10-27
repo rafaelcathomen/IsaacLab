@@ -250,11 +250,15 @@ def test_model_based_wrapper_preserves_pre_reset_state_and_action_history(raw_en
 
     task = SimpleNamespace(num_actions=1, representation=SimpleNamespace(unflatten=lambda state: (state,)))
     env = RslRlModelBasedEnvWrapper(raw_env, task, capture)
+    if not hasattr(raw, "reward_manager"):
+        raw.extras.setdefault("log", {})["Episode_Termination/time_out"] = 1
     outputs = []
     for index in range(_EPISODE_STEPS + 1):
         before = torch.cat((robot.data.joint_pos.torch, robot.data.joint_vel.torch), dim=-1).clone()
         previous = env.prev_action.clone()
         out = env.step(torch.full((_NUM_ENVS, 1), float(index + 1), device=raw.device))
+        if index == 0 and not hasattr(raw, "reward_manager"):
+            assert out["metrics"]["Episode_Termination/time_out"].mean().item() == 1.0
         torch.testing.assert_close(out["state"], before)
         torch.testing.assert_close(out["prev_action"], previous)
         assert out["episode_step"].tolist() == [index % _EPISODE_STEPS] * _NUM_ENVS

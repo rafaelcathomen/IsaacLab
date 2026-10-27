@@ -151,7 +151,7 @@ class RslRlModelBasedEnvWrapper:
                 transition[key] = copy.deepcopy(extras[key])
         if extras.get("log"):
             transition["metrics"] = {
-                key: torch.as_tensor(value, device=self.device).clone()
+                key: torch.as_tensor(value, device=self.device, dtype=torch.float).clone()
                 for key, value in {**extras["log"], **transition.get("metrics", {})}.items()
             }
         self.prev_prev_action = self.prev_action.masked_fill(done[:, None], 0)
