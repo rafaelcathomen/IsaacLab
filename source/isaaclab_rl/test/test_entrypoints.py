@@ -889,11 +889,12 @@ def test_rsl_rl_checkpoint_preserves_selected_optimizer_state(
 ) -> None:
     """Runner continuation restores models, iteration, and RND while optionally resetting the policy optimizer."""
     pytest.importorskip("rsl_rl")
-    from rsl_rl.runners import DistillationRunner, OnPolicyRunner
     from tensordict import TensorDict
 
+    from isaaclab_rl.entrypoints.backends._rsl_rl import _create_rsl_rl_runner
+    from isaaclab_rl.rsl_rl import RslRlDistillationRunnerCfg
+
     distillation = runner_class == "DistillationRunner"
-    runner_type = DistillationRunner if distillation else OnPolicyRunner
     model_names = ("student", "teacher") if distillation else ("actor", "critic")
     obs = TensorDict({"obs": torch.ones(1, 2)}, batch_size=[1])
     env = SimpleNamespace(
@@ -915,7 +916,8 @@ def test_rsl_rl_checkpoint_preserves_selected_optimizer_state(
                 "weight": 1.0,
                 "learning_rate": learning_rate,
             }
-        return runner_type(env, cfg, device="cpu")
+        agent_cfg = SimpleNamespace(class_name=f"rsl_rl.runners:{runner_class}", device="cpu", to_dict=lambda: cfg)
+        return _create_rsl_rl_runner(env, agent_cfg)
 
     source = make_runner(3e-4)
     source.alg.get_policy()(obs).sum().backward()
@@ -927,7 +929,12 @@ def test_rsl_rl_checkpoint_preserves_selected_optimizer_state(
     checkpoint = str(tmp_path / "model.pt")
     source.save(checkpoint)
     destination = make_runner(1e-5)
-    destination.load(checkpoint, load_cfg=checkpoint_load_cfg(resume_optimizer_state, runner_class=runner_class))
+    destination.load(
+        checkpoint,
+        load_cfg=checkpoint_load_cfg(
+            resume_optimizer_state, runner_class=RslRlDistillationRunnerCfg() if distillation else None
+        ),
+    )
 
     assert destination.current_learning_iteration == source.current_learning_iteration
     if distillation:

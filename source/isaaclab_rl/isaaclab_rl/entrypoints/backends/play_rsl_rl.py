@@ -12,11 +12,8 @@ import contextlib
 import logging
 import os
 
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.envs import DirectMARLEnvCfg
-from isaaclab.utils import to_dict
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.string import list_intersection
@@ -44,6 +41,7 @@ from ..common import (
     startup_screen,
 )
 from . import cli_args_rsl_rl as cli_args
+from ._rsl_rl import _configure_rsl_rl_env_cfg, _create_rsl_rl_runner
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +121,7 @@ def run(argv: list[str]) -> None:
             env_cfg.log_dir = log_dir
             apply_video_recording(env_cfg, log_dir, args_cli, subdir="play", checkpoint_path=resume_path)
 
+            _configure_rsl_rl_env_cfg(env_cfg, agent_cfg)
             screen.stage("Creating environment")
             env = create_isaaclab_env(
                 args_cli.task,
@@ -135,16 +134,11 @@ def run(argv: list[str]) -> None:
             screen.stage("Loading policy")
             env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
             logger.info(f"Loading model checkpoint from: {resume_path}")
-            if agent_cfg.class_name == "OnPolicyRunner":
-                runner = OnPolicyRunner(env, to_dict(agent_cfg), log_dir=None, device=agent_cfg.device)
-            elif agent_cfg.class_name == "DistillationRunner":
-                runner = DistillationRunner(env, to_dict(agent_cfg), log_dir=None, device=agent_cfg.device)
-            else:
-                raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+            runner = _create_rsl_rl_runner(env, agent_cfg)
             # configure_seed must run after runner construction so torch determinism does not disturb its initialization
             if args_cli.deterministic:
                 configure_seed(env_cfg.seed, torch_deterministic=True)
-            runner.load(resume_path)
+            runner.load(resume_path, map_location=agent_cfg.device)
             policy = runner.get_inference_policy(device=env.unwrapped.device)
 
             export_model_dir = os.path.join(log_dir, "exported")

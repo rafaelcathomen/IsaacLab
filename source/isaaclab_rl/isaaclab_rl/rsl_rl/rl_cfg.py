@@ -214,6 +214,12 @@ class RslRlBaseRunnerCfg:
     device: str = "cuda:0"
     """The device for the rl-agent. Defaults to cuda:0."""
 
+    compute_final_obs: bool = False
+    """Whether the environment must capture owned pre-reset observations."""
+
+    torch_compile_mode: Literal["default", "max-autotune-no-cudagraphs"] | None = None
+    """The :func:`torch.compile` mode for actor and critic. Defaults to None (disabled)."""
+
     num_steps_per_env: int = MISSING
     """The number of steps per environment per update."""
 
@@ -316,6 +322,3 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
 
     algorithm: RslRlPpoAlgorithmCfg = MISSING
     """The algorithm configuration."""
-
-    torch_compile_mode: Literal["default", "max-autotune-no-cudagraphs"] | None = None
-    """The :func:`torch.compile` mode for actor and critic. Defaults to None (disabled)."""

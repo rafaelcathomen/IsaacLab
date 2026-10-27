@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def checkpoint_load_cfg(
-    resume_optimizer_state: bool, *, runner_class: str = "OnPolicyRunner"
+    resume_optimizer_state: bool, *, runner_class: RslRlBaseRunnerCfg | None = None
 ) -> dict[str, bool] | None:
     """Select checkpoint models while optionally keeping the newly configured policy optimizer.
 
@@ -35,7 +35,9 @@ def checkpoint_load_cfg(
     """
     if resume_optimizer_state:
         return None
-    if runner_class == "DistillationRunner":
+    from ...rsl_rl import RslRlDistillationRunnerCfg
+
+    if isinstance(runner_class, RslRlDistillationRunnerCfg):
         return {"student": True, "teacher": True, "optimizer": False, "iteration": True}
     return {"actor": True, "critic": True, "optimizer": False, "iteration": True, "rnd": True}
 

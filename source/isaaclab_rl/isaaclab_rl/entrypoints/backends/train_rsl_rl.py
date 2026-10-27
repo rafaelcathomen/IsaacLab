@@ -15,11 +15,9 @@ import time
 from datetime import datetime
 
 import torch.distributed as dist
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 from isaaclab.app import add_launcher_args, launch_simulation, report_activity
 from isaaclab.envs import DirectMARLEnvCfg
-from isaaclab.utils import to_dict
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.string import list_intersection
@@ -48,6 +46,7 @@ from ..common import (
     write_run_manifest,
 )
 from . import cli_args_rsl_rl as cli_args
+from ._rsl_rl import _configure_rsl_rl_env_cfg, _create_rsl_rl_runner
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +102,6 @@ def _resolve_checkpoint(args_cli: argparse.Namespace, agent_cfg: RslRlBaseRunner
         )
     if args_cli.checkpoint:
         return retrieve_file_path(args_cli.checkpoint)
-    if agent_cfg.algorithm.class_name == "Distillation":
-        raise ValueError("Distillation training requires --checkpoint.")
     return None
 
 
@@ -154,6 +151,7 @@ def _run(args_cli: argparse.Namespace) -> None:
             env_cfg.log_dir = rank_dir
             apply_video_recording(env_cfg, rank_dir, args_cli)
 
+            _configure_rsl_rl_env_cfg(env_cfg, agent_cfg)
             screen.stage("Creating environment")
             env = create_isaaclab_env(
                 args_cli.task,
@@ -170,12 +168,7 @@ def _run(args_cli: argparse.Namespace) -> None:
             env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
             report_activity(None)
             report_activity("Building policy")
-            if agent_cfg.class_name == "OnPolicyRunner":
-                runner = OnPolicyRunner(env, to_dict(agent_cfg), log_dir=log_dir, device=agent_cfg.device)
-            elif agent_cfg.class_name == "DistillationRunner":
-                runner = DistillationRunner(env, to_dict(agent_cfg), log_dir=log_dir, device=agent_cfg.device)
-            else:
-                raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+            runner = _create_rsl_rl_runner(env, agent_cfg, log_dir=log_dir)
             report_activity(None)
 
             # configure_seed must run after runner construction so torch determinism does not disturb its initialization
@@ -188,9 +181,7 @@ def _run(args_cli: argparse.Namespace) -> None:
                 # map to this process's device; the checkpoint's tensors otherwise land on the GPU that saved them
                 runner.load(
                     resume_path,
-                    load_cfg=cli_args.checkpoint_load_cfg(
-                        args_cli.resume_optimizer_state, runner_class=agent_cfg.class_name
-                    ),
+                    load_cfg=cli_args.checkpoint_load_cfg(args_cli.resume_optimizer_state, runner_class=agent_cfg),
                     map_location=agent_cfg.device,
                 )
             dump_train_configs(rank_dir, env_cfg, agent_cfg)
