@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import MISSING, field
 from typing import Literal
 
@@ -337,3 +338,21 @@ class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
     critic: dict = field(default_factory=lambda: {"class_name": "QModel"}, metadata={"allow_new_keys": True})
     algorithm: dict = field(default_factory=lambda: {"class_name": "SAC"}, metadata={"allow_new_keys": True})
     torch_compile_mode: str | None = None
+
+
+@configclass
+class RslRlSuperMimicRunnerCfg(RslRlBaseRunnerCfg):
+    """Native SuperMimic settings for an environment implementing ``ModelBasedEnv``.
+
+    ``algorithm`` forwards ``SuperMimicCfg`` options; omitted options use RSL-RL
+    defaults. The environment supplies a differentiable task and physical state
+    transitions, rather than the ordinary observation-only vector wrapper.
+    """
+
+    class_name: str = "SuperMimicRunner"
+    init_at_random_ep_len: bool = False
+    num_steps_per_env: int = 1
+    obs_groups: dict[str, list[str]] = field(default_factory=dict, metadata={"allow_new_keys": True})
+    algorithm: dict = field(default_factory=dict, metadata={"allow_new_keys": True})
+    env_adapter: Callable | str | None = None
+    """Task-owned factory wrapping a Gym environment into ``ModelBasedEnv`` for train/play."""

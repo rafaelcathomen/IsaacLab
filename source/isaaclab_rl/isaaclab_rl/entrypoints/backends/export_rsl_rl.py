@@ -126,6 +126,11 @@ def _resolve_checkpoint(
 
 def export_rsl_rl_agent(args_cli: argparse.Namespace, env_cfg: Any, agent_cfg: RslRlBaseRunnerCfg) -> bool:
     """Export an RSL-RL agent; returns whether a graph was written."""
+    if agent_cfg.class_name == "SuperMimicRunner":
+        raise NotImplementedError(
+            "SuperMimic has separate history and goal inputs. Use its native TorchScript export "
+            "or the task package's deployment exporter."
+        )
     # the LEAPP runtime loads simulation modules, so import it only after the launch
     from leapp import annotate
 

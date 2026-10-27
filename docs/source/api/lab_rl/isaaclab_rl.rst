@@ -88,6 +88,28 @@ previews; custom class-based tensor processors must implement
 Native model and algorithm dictionaries accept Hydra ``+`` and ``++`` additions, validated by their consumer in
 RSL-RL. Fixed-schema configuration fields keep their existing validation.
 
+Model-based runners (SuperMimic)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``RslRlSuperMimicRunnerCfg`` with a task-owned ``env_adapter`` factory for
+SuperMimic. The factory receives the Gym environment and returns a
+``ModelBasedEnv``. ``RslRlModelBasedEnvWrapper`` supplies physical collection for
+manager-based and direct RL environments. Its task-owned capture function returns
+flat physical state, privileged context and exogenous goals. Successor captures
+run after physics and reward evaluation, before autoreset, command updates and
+interval events. Goal advancement belongs to the task; stochastic successors
+must already be chosen when captured. Physical context does not automatically
+become a policy input.
+
+The unified training and playback entrypoints select these wrappers from the
+runner configuration. SuperMimic playback maintains observation history and
+passes goals separately to the policy. Playback exports its two-input policy to
+TorchScript. The generic observation-only LEAPP export path does not support
+SuperMimic; task-specific exporters remain in the task package.
+When resuming SuperMimic, ``--no-resume_optimizer_state`` retains all learned models,
+task training state and iteration while keeping fresh optimizers. It requires an
+RSL-RL build with ``SuperMimicRunner.load(..., load_optimizer=False)`` support.
+
 .. automodule:: isaaclab_rl.rsl_rl
    :members:
    :imported-members:

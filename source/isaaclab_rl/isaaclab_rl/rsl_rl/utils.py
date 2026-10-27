@@ -18,25 +18,37 @@ from .rl_cfg import RslRlBaseRunnerCfg
 from .vecenv_wrapper import RslRlVecEnvWrapper
 
 if TYPE_CHECKING:
-    from rsl_rl.runners import DistillationRunner, OffPolicyRunner, OnPolicyRunner
+    from rsl_rl.env import ModelBasedEnv, VecEnv
+    from rsl_rl.runners import DistillationRunner, OffPolicyRunner, OnPolicyRunner, SuperMimicRunner
 
 OFF_POLICY_RUNNERS = ("OffPolicyRunner",)
 """Runner classes trained from replayed transitions, which need the true terminal observations."""
 
 
-def wrap_rsl_rl_env(env: Any, agent_cfg: RslRlBaseRunnerCfg) -> RslRlVecEnvWrapper:
+def wrap_rsl_rl_env(env: Any, agent_cfg: RslRlBaseRunnerCfg) -> RslRlVecEnvWrapper | ModelBasedEnv:
     """Wrap an Isaac Lab environment for the configured RSL-RL runner.
 
     Off-policy runners record the terminal observations of episodes that end (``extras["final_obs"]``).
     """
+    if agent_cfg.class_name == "SuperMimicRunner":
+        adapter = agent_cfg.env_adapter
+        if adapter is None:
+            if not hasattr(env, "task") or not callable(getattr(env, "state", None)):
+                raise ValueError("SuperMimic needs a ModelBasedEnv or a task-owned env_adapter factory")
+            return env
+        if isinstance(adapter, str):
+            from isaaclab.utils.string import string_to_callable
+
+            adapter = string_to_callable(adapter)
+        return adapter(env)
     return RslRlVecEnvWrapper(
         env, clip_actions=agent_cfg.clip_actions, record_final_obs=agent_cfg.class_name in OFF_POLICY_RUNNERS
     )
 
 
 def create_rsl_rl_runner(
-    env: RslRlVecEnvWrapper, agent_cfg: RslRlBaseRunnerCfg, log_dir: str | None = None, inference: bool = False
-) -> OnPolicyRunner | DistillationRunner | OffPolicyRunner:
+    env: VecEnv | ModelBasedEnv, agent_cfg: RslRlBaseRunnerCfg, log_dir: str | None = None, inference: bool = False
+) -> OnPolicyRunner | DistillationRunner | OffPolicyRunner | SuperMimicRunner:
     """Instantiate the RSL-RL runner selected by ``agent_cfg.class_name``.
 
     For SAC, the per-dimension action bounds are resolved from the environment first (see
@@ -58,10 +70,11 @@ def create_rsl_rl_runner(
         resolve_sac_action_bounds(env, agent_cfg)
     cfg = to_dict(agent_cfg)
     cfg.pop("action_mapping", None)
+    cfg.pop("env_adapter", None)
     if inference and agent_cfg.class_name in OFF_POLICY_RUNNERS:
         cfg["algorithm"]["replay_buffer_size"] = env.num_envs * cfg["algorithm"].get("n_steps", 3)
     runners = importlib.import_module("rsl_rl.runners")
-    if agent_cfg.class_name not in ("OnPolicyRunner", "DistillationRunner", *OFF_POLICY_RUNNERS):
+    if agent_cfg.class_name not in ("OnPolicyRunner", "DistillationRunner", "SuperMimicRunner", *OFF_POLICY_RUNNERS):
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     try:
         runner_class = getattr(runners, agent_cfg.class_name)

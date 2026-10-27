@@ -11,7 +11,7 @@ import math
 import sys
 import warnings
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import MISSING
 from typing import Any, ClassVar
 
@@ -82,6 +82,7 @@ class DirectRLEnv(gym.Env):
         """
         # The env remains closed until initialization completes.
         self._is_closed = True
+        self._pre_reset_callbacks: dict[str, Callable] = {}
         self._is_observation_preview = False
 
         # check that the config is valid
@@ -313,6 +314,20 @@ class DirectRLEnv(gym.Env):
     Operations.
     """
 
+    def register_pre_reset_callback(self, name: str, callback: Callable) -> None:
+        """Register ``callback(env)`` after rewards and before autoreset on every step.
+
+        Collectors can copy physical successors here without recomputing policy
+        observations. Callbacks must not mutate the environment.
+        """
+        if name in self._pre_reset_callbacks:
+            raise ValueError(f"A pre-reset callback named {name!r} is already registered")
+        self._pre_reset_callbacks[name] = callback
+
+    def unregister_pre_reset_callback(self, name: str) -> None:
+        """Remove a previously registered transition callback."""
+        del self._pre_reset_callbacks[name]
+
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[VecEnvObs, dict]:
         """Resets all the environments and returns observations.
 
@@ -430,6 +445,9 @@ class DirectRLEnv(gym.Env):
         self.reset_buf = self.reset_terminated | self.reset_time_outs
         self.reward_buf = self._get_rewards()
 
+        for callback in tuple(self._pre_reset_callbacks.values()):
+            callback(self)
+
         # -- reset envs that terminated/timed-out and log the episode information
         reset_env_ids = self._reset_envs_from_buffer()
         if reset_env_ids is None:
@@ -542,9 +560,11 @@ class DirectRLEnv(gym.Env):
         """
         scalars = {
             "episode": {
-                "mean_reward": lambda: float(getattr(self, "reward_buf", None).mean())
-                if getattr(self, "reward_buf", None) is not None
-                else 0.0,
+                "mean_reward": lambda: (
+                    float(getattr(self, "reward_buf", None).mean())
+                    if getattr(self, "reward_buf", None) is not None
+                    else 0.0
+                ),
                 "episode_length": lambda: float(self.episode_length_buf.float().mean()),
             }
         }

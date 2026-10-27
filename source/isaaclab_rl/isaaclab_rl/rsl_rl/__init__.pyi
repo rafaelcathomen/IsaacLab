@@ -10,6 +10,8 @@ __all__ = [
     "RslRlCNNModelCfg",
     "RslRlMLPModelCfg",
     "RslRlOffPolicyRunnerCfg",
+    "RslRlSuperMimicRunnerCfg",
+    "RslRlModelBasedEnvWrapper",
     "RslRlOnPolicyRunnerCfg",
     "RslRlPpoAlgorithmCfg",
     "RslRlRNNModelCfg",
@@ -23,6 +25,7 @@ __all__ = [
 ]
 
 from .distillation_cfg import RslRlDistillationAlgorithmCfg, RslRlDistillationRunnerCfg
+from .model_based_wrapper import RslRlModelBasedEnvWrapper
 from .rl_cfg import (
     RslRlBaseRunnerCfg,
     RslRlCNNModelCfg,
@@ -31,6 +34,7 @@ from .rl_cfg import (
     RslRlOnPolicyRunnerCfg,
     RslRlPpoAlgorithmCfg,
     RslRlRNNModelCfg,
+    RslRlSuperMimicRunnerCfg,
 )
 from .rnd_cfg import RslRlRndCfg
 from .sac_cfg import RslRlSacRunnerCfg

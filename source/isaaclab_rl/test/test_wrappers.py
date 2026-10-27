@@ -227,6 +227,50 @@ def test_rsl_rl_wrapper_reports_invalid_unwrapped_type() -> None:
     assert "OuterEnv" not in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    ("task", "finite_horizon", "compute_final_obs"),
+    [("Isaac-Cartpole", False, False), ("Isaac-Cartpole-Direct", False, False)],
+)
+def test_model_based_wrapper_preserves_pre_reset_state_and_action_history(raw_env: Any) -> None:
+    """Model replay retains physical successors and boundaries through same-step autoreset."""
+    from types import SimpleNamespace
+
+    from isaaclab_rl.rsl_rl import RslRlModelBasedEnvWrapper
+
+    raw = raw_env.unwrapped
+    robot = next(iter(raw.scene.articulations.values()))
+    scratch = torch.empty((_NUM_ENVS, 4), device=raw.device)
+    phases = []
+
+    def capture(env: Any, successor: bool) -> dict:
+        scratch.copy_(torch.cat((robot.data.joint_pos.torch, robot.data.joint_vel.torch), dim=-1))
+        if successor:
+            phases.append(env.episode_length_buf.clone())
+        return {"state": scratch, "xi": scratch[:, :1], "goal_state": scratch[:, :1]}
+
+    task = SimpleNamespace(num_actions=1, representation=SimpleNamespace(unflatten=lambda state: (state,)))
+    env = RslRlModelBasedEnvWrapper(raw_env, task, capture)
+    outputs = []
+    for index in range(_EPISODE_STEPS + 1):
+        before = torch.cat((robot.data.joint_pos.torch, robot.data.joint_vel.torch), dim=-1).clone()
+        previous = env.prev_action.clone()
+        out = env.step(torch.full((_NUM_ENVS, 1), float(index + 1), device=raw.device))
+        torch.testing.assert_close(out["state"], before)
+        torch.testing.assert_close(out["prev_action"], previous)
+        assert out["episode_step"].tolist() == [index % _EPISODE_STEPS] * _NUM_ENVS
+        outputs.append((out, before))
+        if index == _EPISODE_STEPS - 1:
+            assert bool(out["done"].all())
+            assert not torch.equal(out["next_state"], env.state()[0])
+            assert not bool(env.prev_action.any())
+            assert not bool(env.prev_prev_action.any())
+    assert [int(phase[0]) for phase in phases] == [1, 2, 3, 1]
+    scratch.fill_(999)
+    for out, before in outputs:
+        torch.testing.assert_close(out["state"], before)
+    env.close()
+
+
 def _assert_finite(data: Any) -> None:
     if isinstance(data, torch.Tensor):
         assert torch.isfinite(data).all()
