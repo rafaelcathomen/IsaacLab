@@ -53,6 +53,7 @@ class ShadowHandCameraEnv(ShadowHandDirectEnv):
         pose_loss, embeddings = self.feature_extractor.step(
             self._tiled_camera.data.output,
             object_pose,
+            preview=self.is_observation_preview,
         )
 
         self.embeddings = embeddings.clone().detach()
@@ -107,5 +108,6 @@ class ShadowHandCameraEnv(ShadowHandDirectEnv):
         # vision observations from the CNN
         image_obs = self._compute_image_observations()
         obs = torch.cat((state_obs, image_obs), dim=-1)
-        self._update_fingertip_force_sensors()
+        if not self.is_observation_preview:
+            self._update_fingertip_force_sensors()
         return {"policy": obs, "critic": self._compute_states()}

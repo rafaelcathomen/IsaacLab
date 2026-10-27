@@ -94,6 +94,7 @@ class ManagerBasedEnv:
         self.cfg = cfg
         # initialize internal variables
         self._physics_handles_decimation = False
+        self._is_observation_preview = False
 
         # set the seed for the environment
         if self.cfg.seed is not None:
@@ -252,6 +253,15 @@ class ManagerBasedEnv:
     """
     Properties.
     """
+
+    @property
+    def is_observation_preview(self) -> bool:
+        """Whether observations are being read without committing stateful observation history.
+
+        Stateful observation terms should return a prospective sample without updating their
+        internal state while this is True. It is False during ordinary observation computation.
+        """
+        return getattr(self, "_is_observation_preview", False)
 
     @property
     def num_envs(self) -> int:

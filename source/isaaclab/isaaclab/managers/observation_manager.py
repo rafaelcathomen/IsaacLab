@@ -348,7 +348,9 @@ class ObservationManager(ManagerBase):
         # nothing to log here
         return {}
 
-    def compute(self, update_history: bool = False) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
+    def compute(
+        self, update_history: bool = False, *, preview: bool = False
+    ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         """Compute the observations per group for all groups.
 
         The method computes the observations for all the groups handled by the observation manager.
@@ -358,24 +360,33 @@ class ObservationManager(ManagerBase):
             update_history: Whether to record a new sample in delay and observation history buffers.
                 Defaults to False, which reads recorded data without advancing either buffer. For a delay
                 buffer with no sample since initialization or reset, the current observation is returned.
+            preview: Include the current sample in a prospective history without committing observation
+                state or replacing cached observations. Requires ``update_history=False``. Noise is still
+                evaluated. Custom stateful terms should check ``env.is_observation_preview``, and stateful
+                tensor processors should override their ``preview`` method. Defaults to False.
 
         Returns:
             A dictionary with keys as the group names and values as the computed observations.
             The observations are either concatenated into a single tensor or returned as a dictionary
             with keys corresponding to the term's name.
         """
+        if preview and update_history:
+            raise ValueError("An observation preview cannot also update history")
         # create a buffer for storing obs from all the groups
         obs_buffer = dict()
         # iterate over all the terms in each group
         for group_name in self._group_obs_term_names:
-            obs_buffer[group_name] = self.compute_group(group_name, update_history=update_history)
+            obs_buffer[group_name] = self.compute_group(group_name, update_history=update_history, preview=preview)
         # otherwise return a dict with observations of all groups
 
-        # Cache the observations.
-        self._obs_buffer = obs_buffer
+        # Preview reads must not replace the latest committed observations.
+        if not preview:
+            self._obs_buffer = obs_buffer
         return obs_buffer
 
-    def compute_group(self, group_name: str, update_history: bool = False) -> torch.Tensor | dict[str, torch.Tensor]:
+    def compute_group(
+        self, group_name: str, update_history: bool = False, *, preview: bool = False
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Computes the observations for a given group.
 
         The observations for a given group are computed by calling the registered functions for each
@@ -403,6 +414,10 @@ class ObservationManager(ManagerBase):
             update_history: Whether to record a new sample in delay and observation history buffers.
                 Defaults to False, which reads recorded data without advancing either buffer. For a delay
                 buffer with no sample since initialization or reset, the current observation is returned.
+            preview: Include the current sample as if history advanced once, without modifying delay/history
+                storage or counters. Noise is still evaluated. Custom stateful terms should check
+                ``env.is_observation_preview`` and stateful tensor processors should override ``preview``.
+                Defaults to False.
 
         Returns:
             Depending on the group's configuration, the tensors for individual observation terms are
@@ -412,6 +427,8 @@ class ObservationManager(ManagerBase):
         Raises:
             ValueError: If input ``group_name`` is not a valid group handled by the manager.
         """
+        if preview and update_history:
+            raise ValueError("An observation preview cannot also update history")
         if group_name not in self._group_obs_term_names:
             raise ValueError(
                 f"Unable to find the group '{group_name}' in the observation manager."
@@ -422,92 +439,102 @@ class ObservationManager(ManagerBase):
         term_cfgs = self._group_obs_term_cfgs[group_name]
         obs_terms = zip(group_term_names, term_cfgs)
 
-        # evaluate terms: compute, apply custom tensor processors, add noise, clip, scale
-        for term_name, term_cfg in obs_terms:
-            output_spec = self._term_output_specs.get((group_name, term_name))
-            owned = output_spec is not None
-            if output_spec is not None:
-                shape, dtype, device = output_spec
-                obs = torch.empty(shape, dtype=dtype, device=device)
-                if term_cfg.func(self._env, **term_cfg.params, out=obs) is not obs:
-                    raise ValueError(
-                        f"Observation term '{group_name}/{term_name}' must return the supplied 'out' tensor."
-                    )
-            else:
-                obs = term_cfg.func(self._env, **term_cfg.params)
-            # apply post-processing
-            if term_cfg.tensor_processors is not None:
-                for tensor_processor_cfg in term_cfg.tensor_processors:
+        was_preview = getattr(self._env, "_is_observation_preview", False)
+        if preview:
+            self._env._is_observation_preview = True
+        try:
+            # evaluate terms: compute, apply custom tensor processors, add noise, clip, scale
+            for term_name, term_cfg in obs_terms:
+                output_spec = self._term_output_specs.get((group_name, term_name))
+                owned = output_spec is not None
+                if output_spec is not None:
+                    shape, dtype, device = output_spec
+                    obs = torch.empty(shape, dtype=dtype, device=device)
+                    if term_cfg.func(self._env, **term_cfg.params, out=obs) is not obs:
+                        raise ValueError(
+                            f"Observation term '{group_name}/{term_name}' must return the supplied 'out' tensor."
+                        )
+                else:
+                    obs = term_cfg.func(self._env, **term_cfg.params)
+                # apply post-processing
+                if term_cfg.tensor_processors is not None:
+                    for tensor_processor_cfg in term_cfg.tensor_processors:
+                        owned = False
+                        # Custom callbacks may modify or retain their input.
+                        obs = obs.clone()
+                        if isinstance(tensor_processor_cfg.func, tensor_processors.TensorProcessor):
+                            func = tensor_processor_cfg.func
+                            obs = func.preview(obs) if preview else func(obs)
+                        else:
+                            obs = tensor_processor_cfg.func(obs, **tensor_processor_cfg.params)
+                # Noise callbacks must not modify their input, but may return borrowed storage.
+                if isinstance(term_cfg.noise, noise.NoiseCfg):
+                    obs = term_cfg.noise.func(obs, term_cfg.noise)
                     owned = False
-                    # Custom callbacks may modify or retain their input.
-                    obs = obs.clone()
-                    if isinstance(tensor_processor_cfg.func, tensor_processors.TensorProcessor):
-                        obs = tensor_processor_cfg.func(obs)
-                    else:
-                        obs = tensor_processor_cfg.func(obs, **tensor_processor_cfg.params)
-            # Noise callbacks must not modify their input, but may return borrowed storage.
-            if isinstance(term_cfg.noise, noise.NoiseCfg):
-                obs = term_cfg.noise.func(obs, term_cfg.noise)
-                owned = False
-            elif isinstance(term_cfg.noise, noise.NoiseModelCfg) and term_cfg.noise.func is not None:
-                obs = term_cfg.noise.func(obs)
-                owned = False
-            if term_cfg.clip:
-                obs = (
-                    obs.clip_(min=term_cfg.clip[0], max=term_cfg.clip[1])
-                    if owned
-                    else obs.clip(min=term_cfg.clip[0], max=term_cfg.clip[1])
-                )
-                owned = True
-            if term_cfg.scale is not None:
-                obs = obs.mul_(term_cfg.scale) if owned else obs * term_cfg.scale
-                owned = True
-            if term_name in self._group_obs_term_delay_buffer[group_name]:
-                obs = self._group_obs_term_delay_buffer[group_name][term_name].compute(
-                    obs, update_history=update_history
-                )
-                # the delay buffer returns storage independent of its history
-                owned = True
-            # Update the history buffer if observation term has history enabled
-            if term_cfg.history_length > 0:
-                circular_buffer = self._group_obs_term_history_buffer[group_name][term_name]
-                if update_history:
-                    circular_buffer.append(obs)
-                elif circular_buffer._buffer is None:
-                    # because circular buffer only exits after the simulation steps,
-                    # this guards history buffer from corruption by external calls before simulation start
-                    circular_buffer = CircularBuffer(
-                        max_len=circular_buffer.max_length,
-                        batch_size=circular_buffer.batch_size,
-                        device=circular_buffer.device,
-                        stack_dim=1 if obs.ndim > 1 else None,
+                elif isinstance(term_cfg.noise, noise.NoiseModelCfg) and term_cfg.noise.func is not None:
+                    obs = term_cfg.noise.func(obs)
+                    owned = False
+                if term_cfg.clip:
+                    obs = (
+                        obs.clip_(min=term_cfg.clip[0], max=term_cfg.clip[1])
+                        if owned
+                        else obs.clip(min=term_cfg.clip[0], max=term_cfg.clip[1])
                     )
-                    circular_buffer.append(obs)
-
-                obs = circular_buffer.buffer
-                owned = False
-                if term_cfg.history_newest_first:
-                    # flip always copies, so the result no longer borrows the history storage
-                    obs = obs.flip(dims=[1])
                     owned = True
-                if term_cfg.flatten_history_dim:
-                    obs = obs.reshape(self._env.num_envs, -1)
-            # Secure borrowed storage before another term can overwrite it, including shared scratch buffers.
-            group_obs[term_name] = obs if owned else obs.clone()
+                if term_cfg.scale is not None:
+                    obs = obs.mul_(term_cfg.scale) if owned else obs * term_cfg.scale
+                    owned = True
+                if term_name in self._group_obs_term_delay_buffer[group_name]:
+                    obs = self._group_obs_term_delay_buffer[group_name][term_name].compute(
+                        obs, update_history=update_history, preview=preview
+                    )
+                    # the delay buffer returns storage independent of its history
+                    owned = True
+                # Update the history buffer if observation term has history enabled
+                if term_cfg.history_length > 0:
+                    circular_buffer = self._group_obs_term_history_buffer[group_name][term_name]
+                    if preview:
+                        obs = circular_buffer.peek_append(obs)
+                        owned = True
+                    else:
+                        if update_history:
+                            circular_buffer.append(obs)
+                        elif circular_buffer._buffer is None:
+                            # Reading before the first step must not initialize live history.
+                            circular_buffer = CircularBuffer(
+                                max_len=circular_buffer.max_length,
+                                batch_size=circular_buffer.batch_size,
+                                device=circular_buffer.device,
+                                stack_dim=1 if obs.ndim > 1 else None,
+                            )
+                            circular_buffer.append(obs)
+                        obs = circular_buffer.buffer
+                        owned = False
+                    if term_cfg.history_newest_first:
+                        # flip always copies, so the result no longer borrows the history storage
+                        obs = obs.flip(dims=[1])
+                        owned = True
+                    if term_cfg.flatten_history_dim:
+                        obs = obs.reshape(self._env.num_envs, -1)
+                # Secure borrowed storage before another term can overwrite it, including shared scratch buffers.
+                group_obs[term_name] = obs if owned else obs.clone()
 
-        # concatenate all observations in the group together
-        if self._group_obs_concatenate[group_name]:
-            if len(group_obs) == 1:
-                return next(iter(group_obs.values()))
-            if self._group_obs_time_major[group_name]:
-                history_length = term_cfgs[0].history_length
-                return torch.cat(
-                    [obs.reshape(self._env.num_envs, history_length, -1) for obs in group_obs.values()], dim=-1
-                ).reshape(self._env.num_envs, -1)
-            # set the concatenate dimension, account for the batch dimension if positive dimension is given
-            return torch.cat(list(group_obs.values()), dim=self._group_obs_concatenate_dim[group_name])
-        else:
-            return group_obs
+            # concatenate all observations in the group together
+            if self._group_obs_concatenate[group_name]:
+                if len(group_obs) == 1:
+                    return next(iter(group_obs.values()))
+                if self._group_obs_time_major[group_name]:
+                    history_length = term_cfgs[0].history_length
+                    return torch.cat(
+                        [obs.reshape(self._env.num_envs, history_length, -1) for obs in group_obs.values()], dim=-1
+                    ).reshape(self._env.num_envs, -1)
+                # set the concatenate dimension, account for the batch dimension if positive dimension is given
+                return torch.cat(list(group_obs.values()), dim=self._group_obs_concatenate_dim[group_name])
+            else:
+                return group_obs
+        finally:
+            if preview:
+                self._env._is_observation_preview = was_preview
 
     def serialize(self) -> dict:
         """Serialize the observation term configurations for all active groups.
