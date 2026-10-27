@@ -264,6 +264,10 @@ def test_model_based_wrapper_preserves_pre_reset_state_and_action_history(raw_en
             assert not torch.equal(out["next_state"], env.state()[0])
             assert not bool(env.prev_action.any())
             assert not bool(env.prev_prev_action.any())
+            if hasattr(raw, "reward_manager"):
+                torch.testing.assert_close(
+                    out["metrics"]["Episode_Reward/alive"], raw.extras["log"]["Episode_Reward/alive"]
+                )
     assert [int(phase[0]) for phase in phases] == [1, 2, 3, 1]
     scratch.fill_(999)
     for out, before in outputs:
