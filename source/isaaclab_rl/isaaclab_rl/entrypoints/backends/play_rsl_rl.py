@@ -79,8 +79,8 @@ def _resolve_checkpoint(
     if args_cli.checkpoint and is_wandb_checkpoint(args_cli.checkpoint):
         return resolve_wandb_checkpoint(args_cli.checkpoint)
     if args_cli.checkpoint == "pretrained":
-        if args_cli.agent != "rsl_rl_cfg_entry_point":
-            raise ValueError("Published checkpoints require the default RSL-RL agent entry point.")
+        if agent_cfg.class_name == "OffPolicyRunner":
+            raise ValueError("Published checkpoints are PPO policies and cannot be loaded by OffPolicyRunner agents.")
         return resolve_published_checkpoint("rsl_rl", args_cli.task, env_cfg)
     if args_cli.checkpoint in CHECKPOINT_SELECTORS:
         return resolve_checkpoint_selector(

@@ -166,7 +166,7 @@ The actor's ``action_range`` specifies bounds in the raw coordinates accepted by
 environment. ``clip_actions=None`` preserves that range.
 
 Use the same agent entry point with the playback and export commands. Published
-``pretrained`` checkpoints are available only for the default agent entry point.
+``pretrained`` checkpoints are PPO policies and cannot be loaded by ``OffPolicyRunner`` agents.
 
 .. _Stable-Baselines3: https://stable-baselines3.readthedocs.io/en/master/
 .. _RL-Games: https://github.com/Denys88/rl_games
