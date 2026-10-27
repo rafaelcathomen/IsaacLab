@@ -955,7 +955,7 @@ def test_sac_configuration_tracks_native_constructor() -> None:
     cfg = RslRlSacAlgorithmCfg()
     parameters = inspect.signature(SAC.__init__).parameters
     injected = {"self", "actor", "critics", "storage", "device", "multi_gpu_cfg"}
-    construction = {"class_name", "num_critics", "replay_buffer_size"}
+    construction = {"class_name", "num_critics", "replay_buffer_size", "max_replay_memory_fraction"}
     assert {field.name for field in fields(cfg)} - construction == set(parameters) - injected
     for name, parameter in parameters.items():
         if name not in injected and not isinstance(getattr(cfg, name), type(MISSING)):

@@ -27,6 +27,9 @@ class RslRlSacAlgorithmCfg:
     replay_buffer_size: int = 100_000
     """Replay capacity in transitions across all environments."""
 
+    max_replay_memory_fraction: float | None = None
+    """Optional fraction of free GPU memory used to cap replay on its first insertion."""
+
     num_updates: int = MISSING
     """Number of critic updates per collection iteration."""
 
