@@ -334,6 +334,6 @@ class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
     num_steps_per_env: int = 1
     obs_groups: dict[str, list[str]] = field(default_factory=dict, metadata={"allow_new_keys": True})
     actor: dict = field(default_factory=lambda: {"class_name": "MLPModel"}, metadata={"allow_new_keys": True})
-    critic: dict = field(default_factory=lambda: {"class_name": "QModel"}, metadata={"allow_new_keys": True})
+    critic: dict = field(default_factory=lambda: {"class_name": "QMLPModel"}, metadata={"allow_new_keys": True})
     algorithm: dict = field(default_factory=lambda: {"class_name": "SAC"}, metadata={"allow_new_keys": True})
     torch_compile_mode: str | None = None
