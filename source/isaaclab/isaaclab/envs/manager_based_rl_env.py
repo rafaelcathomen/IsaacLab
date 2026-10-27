@@ -277,12 +277,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
 
     def _capture_final_obs(self) -> None:
         """Capture owned observations before reset, command updates and interval events."""
-        was_preview = self.is_observation_preview
-        self._is_observation_preview = True
-        try:
-            self.extras["final_obs"] = self.observation_manager.compute(preview=True)
-        finally:
-            self._is_observation_preview = was_preview
+        self.extras["final_obs"] = self.observation_manager.compute(preview=True)
 
     def render(self, recompute: bool = False) -> np.ndarray | None:
         """Run rendering without stepping through the physics.

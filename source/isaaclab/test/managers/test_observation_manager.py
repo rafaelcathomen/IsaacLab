@@ -1173,7 +1173,8 @@ def test_dictionary_term_rejected(setup_env):
         ObservationManager({"policy": cfg}, setup_env)
 
 
-def test_preview_preserves_custom_term_state_and_cached_observations():
+@pytest.mark.parametrize("capture_final_obs", [False, True], ids=["direct", "final_obs"])
+def test_preview_preserves_custom_term_state_and_cached_observations(capture_final_obs):
     """Custom terms see the public flag, and GUI reads still use the committed snapshot."""
     from types import SimpleNamespace
 
@@ -1191,8 +1192,12 @@ def test_preview_preserves_custom_term_state_and_cached_observations():
     torch.testing.assert_close(committed["policy"], torch.full((2, 1), 0.5))
     env.observation_manager = manager
     env.extras = {}
-    ManagerBasedRLEnv._capture_final_obs(env)
-    torch.testing.assert_close(env.extras["final_obs"]["policy"], torch.full((2, 1), 1.0))
+    if capture_final_obs:
+        ManagerBasedRLEnv._capture_final_obs(env)
+        preview = env.extras["final_obs"]
+    else:
+        preview = manager.compute(preview=True)
+    torch.testing.assert_close(preview["policy"], torch.full((2, 1), 1.0))
     assert manager.get_active_iterable_terms(0) == [("policy-clock", [0.5])]
     assert not env.is_observation_preview
     torch.testing.assert_close(manager.compute(update_history=True)["policy"], torch.full((2, 1), 1.0))

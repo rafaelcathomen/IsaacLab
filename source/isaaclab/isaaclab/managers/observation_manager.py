@@ -376,6 +376,9 @@ class ObservationManager(ManagerBase):
             raise ValueError("An observation preview cannot also update history")
         was_preview = self._is_preview
         self._is_preview = preview
+        if preview:
+            was_env_preview = getattr(self._env, "_is_observation_preview", False)
+            self._env._is_observation_preview = True
         try:
             obs_buffer = {
                 group_name: self.compute_group(group_name, update_history=update_history)
@@ -386,6 +389,8 @@ class ObservationManager(ManagerBase):
             return obs_buffer
         finally:
             self._is_preview = was_preview
+            if preview:
+                self._env._is_observation_preview = was_env_preview
 
     def compute_group(self, group_name: str, update_history: bool = False) -> torch.Tensor | dict[str, torch.Tensor]:
         """Computes the observations for a given group.
