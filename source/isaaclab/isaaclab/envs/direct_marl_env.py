@@ -355,6 +355,9 @@ class DirectMARLEnv(gym.Env):
         Returns:
             A tuple containing the observations and extras (keyed by the agent ID).
         """
+        for agent_extras in self.extras.values():
+            agent_extras.pop("final_obs", None)
+            agent_extras.pop("final_obs_every_step", None)
         # set the seed
         if seed is not None:
             self.seed(seed)
@@ -409,6 +412,7 @@ class DirectMARLEnv(gym.Env):
         """
         for agent_extras in self.extras.values():
             agent_extras.pop("final_obs", None)
+            agent_extras.pop("final_obs_every_step", None)
         actions = {agent: action.to(self.device) for agent, action in actions.items()}
 
         # add action noise
@@ -452,9 +456,13 @@ class DirectMARLEnv(gym.Env):
 
         # -- reset envs that terminated/timed-out and log the episode information
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        if self.cfg.final_obs_every_step or (self.cfg.compute_final_obs and len(reset_env_ids) > 0):
+            self._capture_final_obs()
+            if self.cfg.final_obs_every_step:
+                for agent_extras in self.extras.values():
+                    if "final_obs" in agent_extras:
+                        agent_extras["final_obs_every_step"] = True
         if len(reset_env_ids) > 0:
-            if self.cfg.compute_final_obs:
-                self._capture_final_obs()
             self._reset_idx(reset_env_ids)
 
         # post-step: step interval event

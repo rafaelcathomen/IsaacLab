@@ -105,9 +105,10 @@ def test_obs_space_follows_clip_constraint():
 
 
 @pytest.mark.parametrize("env_kind", ["manager", "direct", "marl"])
-@pytest.mark.parametrize("boundary", ["auto", "manual", "mixed"])
-def test_final_observations_precede_resets_and_events(env_kind, boundary):
-    """Every boundary captures once, including manual resets, with owned pre-event successors."""
+@pytest.mark.parametrize("boundary", ["auto", "manual", "mixed", "continuing"])
+@pytest.mark.parametrize("every_step", [False, True])
+def test_final_observations_precede_resets_and_events(env_kind, boundary, every_step):
+    """Capture physical successors before resets, command changes and pushes, without advancing history."""
     import torch
 
     from isaaclab.envs import DirectMARLEnv, DirectRLEnv
@@ -120,16 +121,19 @@ def test_final_observations_precede_resets_and_events(env_kind, boundary):
     env.cfg = SimpleNamespace(
         decimation=1,
         sim=SimpleNamespace(render_interval=1, dt=0.01),
-        compute_final_obs=True,
+        compute_final_obs=not every_step,
+        final_obs_every_step=every_step,
         action_noise_model=None,
         observation_noise_model=None,
         num_rerenders_on_reset=0,
         events=True,
+        wait_for_textures=False,
     )
     state = torch.tensor([[10.0], [20.0]])
+    command = torch.tensor([[1.0], [2.0]])
     reset_calls = []
     preview_values = []
-    manual_reset = boundary != "auto"
+    manual_reset = boundary in ("manual", "mixed")
     ui_request = [manual_reset]
 
     def consume_reset():
@@ -141,11 +145,13 @@ def test_final_observations_precede_resets_and_events(env_kind, boundary):
         return state
 
     def reset(ids):
-        reset_calls.append(ids.clone())
+        reset_calls.append(ids.clone() if isinstance(ids, torch.Tensor) else ids)
         state[ids] = -1
 
     def event(**kwargs):
         state.add_(1000)
+        if env_kind != "manager":
+            command.add_(100)
 
     env.sim = SimpleNamespace(
         device="cpu",
@@ -153,6 +159,7 @@ def test_final_observations_precede_resets_and_events(env_kind, boundary):
         is_playing=lambda: True,
         consume_reset_request=consume_reset,
         step=lambda **kwargs: state.add_(1),
+        forward=lambda: None,
     )
     env.scene = SimpleNamespace(num_envs=2, write_data_to_sim=lambda: None, update=lambda **kwargs: None)
     env.render_enabled = False
@@ -166,7 +173,7 @@ def test_final_observations_precede_resets_and_events(env_kind, boundary):
     env.reset_time_outs = torch.zeros(2, dtype=torch.bool)
     env._reset_idx = reset
     env.event_manager = SimpleNamespace(active_terms=["interval"], available_modes=["interval"], apply=event)
-    done = torch.tensor([boundary != "manual", False])
+    done = torch.tensor([boundary in ("auto", "mixed"), False])
     timeout = torch.zeros(2, dtype=torch.bool)
     reward = torch.zeros(2)
     if env_kind == "manager":
@@ -176,7 +183,11 @@ def test_final_observations_precede_resets_and_events(env_kind, boundary):
 
         group = ObservationGroupCfg()
         group.value = ObservationTermCfg(func=managed_observe)
-        env.observation_manager = ObservationManager({"policy": group}, env)
+        goal = ObservationGroupCfg()
+        goal.command = ObservationTermCfg(func=lambda env: command)
+        history = ObservationGroupCfg(history_length=2, flatten_history_dim=False)
+        history.value = ObservationTermCfg(func=lambda env: state)
+        env.observation_manager = ObservationManager({"policy": group, "goal": goal, "history": history}, env)
         env.recorder_manager = SimpleNamespace(
             active_terms=[],
             record_pre_step=lambda: None,
@@ -187,8 +198,8 @@ def test_final_observations_precede_resets_and_events(env_kind, boundary):
         env.action_manager = SimpleNamespace(process_action=lambda action: None, apply_action=lambda: None)
         env.termination_manager = SimpleNamespace(compute=lambda: done.clone(), terminated=done, time_outs=timeout)
         env.reward_manager = SimpleNamespace(compute=lambda **kwargs: reward)
-        env.command_manager = SimpleNamespace(compute=lambda **kwargs: state.add_(100))
-        env.extras = {"final_obs": {"policy": torch.full_like(state, -999)}}
+        env.command_manager = SimpleNamespace(compute=lambda **kwargs: command.add_(100))
+        env.extras = {"final_obs": {"policy": torch.full_like(state, -999)}, "final_obs_every_step": True}
         actions = torch.zeros(2, 1)
     else:
         env._pre_physics_step = lambda actions: None
@@ -196,30 +207,76 @@ def test_final_observations_precede_resets_and_events(env_kind, boundary):
         if env_kind == "direct":
             env._get_dones = lambda: (done, timeout)
             env._get_rewards = lambda: reward
-            env._get_observations = lambda: {"policy": observe()}
-            env.extras = {"final_obs": {"policy": torch.full_like(state, -999)}}
+            env._get_observations = lambda: {"policy": observe(), "goal": command}
+            env.extras = {"final_obs": {"policy": torch.full_like(state, -999)}, "final_obs_every_step": True}
+            if every_step and boundary == "continuing":
+                # Mask-native tasks need not materialize reset indices after every-step capture.
+                env.cfg.compute_final_obs = True
+                env._reset_envs_from_buffer = lambda: None
             actions = torch.zeros(2, 1)
         else:
             env.possible_agents = ["a", "b"]
             env._get_dones = lambda: ({"a": done, "b": done.clone()}, {"a": timeout, "b": timeout.clone()})
             env._get_rewards = lambda: {"a": reward, "b": reward.clone()}
-            env._get_observations = lambda: {"a": observe(), "b": state}
-            env.extras = {agent: {"final_obs": torch.full_like(state, -999)} for agent in ("a", "b")}
+            env._get_observations = lambda: {"a": torch.cat((observe(), command), dim=-1), "b": state}
+            env.extras = {
+                agent: {"final_obs": torch.full_like(state, -999), "final_obs_every_step": True} for agent in ("a", "b")
+            }
             actions = {"a": torch.zeros(2, 1), "b": torch.zeros(2, 1)}
     # Initialization may probe observations; only actual step-time previews count.
     preview_values.clear()
     _, _, terminated, _, extras = env.step(actions)
-    terminal = extras["a"]["final_obs"] if env_kind == "marl" else extras["final_obs"]["policy"]
-    torch.testing.assert_close(terminal, torch.tensor([[11.0], [21.0]]))
-    assert len(preview_values) == len(reset_calls) == 1
-    assert reset_calls[0].tolist() == ([0, 1] if manual_reset else [0])
-    terminated = terminated["a"] if env_kind == "marl" else terminated
-    assert terminated.tolist() == [True, manual_reset]
-    assert not env.is_observation_preview
-    done.zero_()
-    env.step(actions)
-    if env_kind == "marl":
-        assert all("final_obs" not in value for value in env.extras.values())
+    captured = extras["a"] if env_kind == "marl" else extras
+    has_boundary = boundary != "continuing"
+    terminal = None
+    if every_step or has_boundary:
+        final = captured["final_obs"]
+        terminal = final[:, :1] if env_kind == "marl" else final["policy"]
+        final_goal = final[:, 1:] if env_kind == "marl" else final["goal"]
+        torch.testing.assert_close(terminal, torch.tensor([[11.0], [21.0]]))
+        torch.testing.assert_close(final_goal, torch.tensor([[1.0], [2.0]]))
+        assert captured.get("final_obs_every_step") is (True if every_step else None)
+        if env_kind == "marl":
+            torch.testing.assert_close(extras["b"]["final_obs"], torch.tensor([[11.0], [21.0]]))
+            assert extras["b"].get("final_obs_every_step") is (True if every_step else None)
     else:
-        assert "final_obs" not in env.extras
-    torch.testing.assert_close(terminal, torch.tensor([[11.0], [21.0]]))
+        assert "final_obs" not in captured and "final_obs_every_step" not in captured
+    assert len(preview_values) == int(every_step or has_boundary)
+    assert len(reset_calls) == int(has_boundary)
+    if has_boundary:
+        assert reset_calls[0].tolist() == ([0, 1] if manual_reset else [0])
+    terminated = terminated["a"] if env_kind == "marl" else terminated
+    assert terminated.tolist() == [has_boundary, manual_reset]
+    assert not env.is_observation_preview
+    expected_post = torch.tensor([[999.0 if has_boundary else 1011.0], [999.0 if manual_reset else 1021.0]])
+    torch.testing.assert_close(state, expected_post)
+    torch.testing.assert_close(command, torch.tensor([[101.0], [102.0]]))
+    done.zero_()
+    observations = env.step(actions)[0]
+    captured = env.extras["a"] if env_kind == "marl" else env.extras
+    if every_step:
+        final = captured["final_obs"]
+        physical = final[:, :1] if env_kind == "marl" else final["policy"]
+        torch.testing.assert_close(physical, expected_post + 1)
+        assert captured["final_obs_every_step"] is True
+        if env_kind == "manager":
+            torch.testing.assert_close(final["history"], torch.stack((expected_post, expected_post + 1), dim=1))
+            torch.testing.assert_close(
+                observations["history"], torch.stack((expected_post, expected_post + 1001), dim=1)
+            )
+        if boundary == "continuing":
+            # A public reset is not a physical transition, even with every-step capture enabled.
+            env.reset()
+        elif env_kind == "manager" and boundary == "mixed":
+            env.scene.reset_to = lambda *args, **kwargs: None
+            env.reset_to({})
+        else:
+            env.cfg.compute_final_obs = env.cfg.final_obs_every_step = False
+            env.step(actions)
+        captured = env.extras["a"] if env_kind == "marl" else env.extras
+    assert "final_obs" not in captured and "final_obs_every_step" not in captured
+    if env_kind == "marl":
+        assert all("final_obs" not in value and "final_obs_every_step" not in value for value in env.extras.values())
+    if terminal is not None:
+        torch.testing.assert_close(terminal, torch.tensor([[11.0], [21.0]]))
+        torch.testing.assert_close(final_goal, torch.tensor([[1.0], [2.0]]))
