@@ -163,7 +163,7 @@ def export_rsl_rl_agent(args_cli: argparse.Namespace, env_cfg: Any, agent_cfg: R
 
         logger.info(f"Loading model checkpoint from: {resume_path}")
         runner = create_rsl_rl_runner(env, agent_cfg, inference=True)
-        runner.load(resume_path)
+        runner.load(resume_path, map_location=agent_cfg.device)
         policy = runner.get_inference_policy(device=env.unwrapped.device)
         recurrent = is_actor_recurrent_policy(policy)
 
