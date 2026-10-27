@@ -160,7 +160,8 @@ def export_rsl_rl_agent(args_cli: argparse.Namespace, env_cfg: Any, agent_cfg: R
         logger.info(f"Loading model checkpoint from: {resume_path}")
         runner = _create_rsl_rl_runner(env, agent_cfg)
         runner.load(resume_path, map_location=agent_cfg.device)
-        policy = runner.get_inference_policy(device=env.unwrapped.device)
+        # Capture portable operators instead of device-specific fused inference kernels.
+        policy = runner.get_inference_policy(device="cpu")
         if not isinstance(policy, MLPModel):
             raise TypeError("LEAPP export requires an MLPModel policy, including its CNN and RNN variants.")
         required_obs_groups = set(policy.obs_groups) | set(getattr(policy, "obs_groups_2d", ()))
@@ -176,19 +177,19 @@ def export_rsl_rl_agent(args_cli: argparse.Namespace, env_cfg: Any, agent_cfg: R
                         actor_hidden = ensure_actor_hidden_state_initialized(
                             policy,
                             batch_size=env.num_envs,
-                            device=env.unwrapped.device,
+                            device="cpu",
                             dtype=next(policy.parameters()).dtype,
                         )
                         registered_state = annotate.state_tensors(
                             policy_node_name, state_dict_from_actor_hidden(actor_hidden)
                         )
                         set_actor_hidden_state(policy, actor_hidden_from_registered(registered_state, actor_hidden))
-                    actions = policy(obs)
+                    actions = policy(obs.to("cpu"))
                     if recurrent:
                         annotate.update_state(
                             policy_node_name, state_dict_from_actor_hidden(get_actor_hidden_state(policy))
                         )
-                    obs, _, _, _ = env.step(actions)
+                    obs, _, _, _ = env.step(actions.to(env.unwrapped.device))
     finally:
         env.close()
     return True

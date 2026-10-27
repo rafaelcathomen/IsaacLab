@@ -151,7 +151,7 @@ as the built-in CLI and direct RL workers do. A package that fails to import is 
 warning instead of stopping discovery.
 
 Training the G1 velocity task with SAC
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The existing ``Isaac-Velocity-Flat-G1`` task provides a SAC agent entry point.
 Its configuration writes out the FlashSAC recipe, including residual BatchNorm
