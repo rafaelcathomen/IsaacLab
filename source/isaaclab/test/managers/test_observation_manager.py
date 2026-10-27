@@ -898,6 +898,9 @@ def test_class_tensor_processor_roundtrip_preserves_func_and_params():
     observations = manager.compute()["policy"]
     torch.testing.assert_close(observations, env.observation + 2.0)
 
+    with pytest.raises(NotImplementedError, match="preview"):
+        manager.compute(preview=True)
+
     manager.reset()
     assert prepared_tensor_processor_cfg.func.reset_count == 1
 
@@ -1040,6 +1043,79 @@ def test_observation_delay_config_validation(params, error):
     cfg = ObservationTermCfg(func=dummy_observation, **params)
     with pytest.raises(error, match="delay"):
         validate(cfg)
+
+
+def test_preview_includes_current_frame_without_advancing_delay_or_history():
+    """Terminal observations include the successor while live episode history advances once."""
+    import copy
+
+    cfg = HistoryObservationsCfg()
+    cfg.policy.history_length = 3
+    cfg.policy.concatenate_terms = False
+    cfg.policy.current = copy.deepcopy(cfg.policy.dummy)
+    cfg.policy.dummy.delay_min_lag = cfg.policy.dummy.delay_max_lag = 1
+    cfg.policy.dummy.delay_hold_prob = 1.0
+    env = DummyEnv()
+    manager = ObservationManager(cfg, cast("ManagerBasedEnv", env))
+    for value in (10.0, 20.0):
+        env.observation.fill_(value)
+        manager.compute(update_history=True)
+    env.observation.fill_(30.0)
+    manager.reset([1])
+    preview = manager.compute(preview=True)["policy"]
+    expected_current = torch.tensor([[10.0, 20.0, 30.0], [30.0, 30.0, 30.0]])
+    expected_delayed = torch.tensor([[10.0, 10.0, 20.0], [30.0, 30.0, 30.0]])
+    torch.testing.assert_close(preview["current"], expected_current)
+    torch.testing.assert_close(preview["dummy"], expected_delayed)
+    committed = manager.compute(update_history=True)["policy"]
+    torch.testing.assert_close(committed["current"], expected_current)
+    torch.testing.assert_close(committed["dummy"], expected_delayed)
+    env.observation.fill_(40.0)
+    following = manager.compute(update_history=True)["policy"]
+    torch.testing.assert_close(following["current"], torch.tensor([[20.0, 30.0, 40.0], [30.0, 30.0, 40.0]]))
+
+
+@pytest.mark.parametrize(
+    ("processor_cfg", "dtype", "expected_preview", "expected_live", "expected_following"),
+    [
+        (tensor_processors.IntegratorCfg(dt=1.0), torch.float32, [45.0, 45.0], [45.0, 15.0], [80.0, 50.0]),
+        (tensor_processors.IntegratorCfg(dt=1.0), torch.float64, [45.0, 45.0], [45.0, 15.0], [80.0, 50.0]),
+        (
+            tensor_processors.DigitalFilterCfg(A=[0.0], B=[0.0, 1.0]),
+            torch.float32,
+            [20.0, 20.0],
+            [20.0, 0.0],
+            [30.0, 30.0],
+        ),
+    ],
+    ids=["integrator", "integrator_float64_input", "digital_filter"],
+)
+def test_preview_preserves_tensor_processors_across_partial_reset(
+    processor_cfg, dtype, expected_preview, expected_live, expected_following
+):
+    """Terminal reads must not advance a surviving environment's filter or integrator."""
+    cfg = HistoryObservationsCfg()
+    cfg.policy.history_length = None
+    cfg.policy.dummy.tensor_processors = [
+        processor_cfg,
+        tensor_processors.TensorProcessorCfg(func=lambda data: data @ torch.ones(1, 1, dtype=torch.float32)),
+    ]
+    env = DummyEnv()
+    env.observation = env.observation.to(dtype)
+    manager = ObservationManager(cfg, cast("ManagerBasedEnv", env))
+    for value in (10.0, 20.0):
+        env.observation.fill_(value)
+        manager.compute(update_history=True)
+    env.observation.fill_(30.0)
+    terminal = manager.compute(preview=True)["policy"]
+    torch.testing.assert_close(terminal[:, 0], torch.tensor(expected_preview))
+    manager.reset([1])
+    live = manager.compute(update_history=True)["policy"]
+    torch.testing.assert_close(live[:, 0], torch.tensor(expected_live))
+    env.observation.fill_(40.0)
+    following = manager.compute(update_history=True)["policy"]
+    torch.testing.assert_close(following[:, 0], torch.tensor(expected_following))
+    torch.testing.assert_close(terminal[:, 0], torch.tensor(expected_preview))
 
 
 @pytest.mark.parametrize("invalid_default", [False, True])

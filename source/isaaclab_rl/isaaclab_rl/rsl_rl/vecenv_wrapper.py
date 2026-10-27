@@ -39,7 +39,13 @@ class RslRlVecEnvWrapper(VecEnv):
         https://github.com/leggedrobotics/rsl_rl/blob/master/rsl_rl/env/vec_env.py
     """
 
-    def __init__(self, env: ManagerBasedRLEnv | DirectRLEnv, clip_actions: float | None = None):
+    def __init__(
+        self,
+        env: ManagerBasedRLEnv | DirectRLEnv,
+        clip_actions: float | None = None,
+        *,
+        record_final_obs: bool = False,
+    ):
         """Initializes the wrapper.
 
         Note:
@@ -48,13 +54,18 @@ class RslRlVecEnvWrapper(VecEnv):
         Args:
             env: The environment to wrap around.
             clip_actions: The clipping value for actions. If ``None``, then no clipping is done.
+            record_final_obs: Enable owned pre-reset observations for off-policy replay.
+                Also preserves true termination precedence when a time limit fires on the same step.
 
         Raises:
             ValueError: When the environment is not an instance of :class:`ManagerBasedRLEnv` or :class:`DirectRLEnv`.
         """
-        check_env_type(env, allow_manager_based_env=True)
+        check_env_type(env, allow_manager_based_env=not record_final_obs, allow_warp=not record_final_obs)
         self.env = env
         self.clip_actions = clip_actions
+        self.record_final_obs = record_final_obs
+        if record_final_obs:
+            self.unwrapped.cfg.compute_final_obs = True
 
         # store information required by wrapper
         self.num_envs = self.unwrapped.num_envs
@@ -146,11 +157,13 @@ class RslRlVecEnvWrapper(VecEnv):
     def reset(self) -> tuple[TensorDict, dict]:  # noqa: D102
         # reset the environment
         obs_dict, extras = self.env.reset()
-        return TensorDict(obs_dict, batch_size=[self.num_envs]), extras
+        observations = TensorDict(obs_dict, batch_size=[self.num_envs])
+        return (observations.clone() if self.record_final_obs else observations), extras
 
     def get_observations(self) -> TensorDict:
         """Returns the current observations of the environment."""
-        return TensorDict(self.unwrapped.obs_buf, batch_size=[self.num_envs])
+        observations = TensorDict(self.unwrapped.obs_buf, batch_size=[self.num_envs])
+        return observations.clone() if self.record_final_obs else observations
 
     def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
         # clip actions
@@ -158,14 +171,21 @@ class RslRlVecEnvWrapper(VecEnv):
             actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
         # record step information
         obs_dict, rew, terminated, truncated, extras = self.env.step(actions)
+        extras = dict(extras)
         # compute dones for compatibility with RSL-RL
         dones = (terminated | truncated).to(dtype=torch.long)
         # move time out information to the extras dict
         # this is only needed for infinite horizon tasks
         if not self.unwrapped.cfg.is_finite_horizon:
-            extras["time_outs"] = truncated
+            extras["time_outs"] = truncated & ~terminated if self.record_final_obs else truncated
+        if self.record_final_obs and "final_obs" in extras:
+            extras["final_obs"] = TensorDict(extras["final_obs"], batch_size=[self.num_envs]).clone()
         # return the step information
-        return TensorDict(obs_dict, batch_size=[self.num_envs]), rew, dones, extras
+        observations = TensorDict(obs_dict, batch_size=[self.num_envs])
+        if self.record_final_obs:
+            observations = observations.clone()
+            rew = rew.clone()
+        return observations, rew, dones, extras
 
     def close(self):  # noqa: D102
         return self.env.close()

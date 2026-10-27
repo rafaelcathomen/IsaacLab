@@ -348,7 +348,9 @@ class ObservationManager(ManagerBase):
         # nothing to log here
         return {}
 
-    def compute(self, update_history: bool = False) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
+    def compute(
+        self, update_history: bool = False, *, preview: bool = False
+    ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         """Compute the observations per group for all groups.
 
         The method computes the observations for all the groups handled by the observation manager.
@@ -356,6 +358,9 @@ class ObservationManager(ManagerBase):
 
         Args:
             update_history: Whether to record a new sample in delay and observation history buffers.
+            preview: Include the current sample in a prospective history without changing delay/history
+                buffers. Requires ``update_history=False``. Noise is still evaluated; class-based
+                tensor processors must implement :meth:`~isaaclab.utils.tensor_processors.TensorProcessor.preview`.
                 Defaults to False, which reads recorded data without advancing either buffer. For a delay
                 buffer with no sample since initialization or reset, the current observation is returned.
 
@@ -368,14 +373,16 @@ class ObservationManager(ManagerBase):
         obs_buffer = dict()
         # iterate over all the terms in each group
         for group_name in self._group_obs_term_names:
-            obs_buffer[group_name] = self.compute_group(group_name, update_history=update_history)
+            obs_buffer[group_name] = self.compute_group(group_name, update_history=update_history, preview=preview)
         # otherwise return a dict with observations of all groups
 
         # Cache the observations.
         self._obs_buffer = obs_buffer
         return obs_buffer
 
-    def compute_group(self, group_name: str, update_history: bool = False) -> torch.Tensor | dict[str, torch.Tensor]:
+    def compute_group(
+        self, group_name: str, update_history: bool = False, *, preview: bool = False
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Computes the observations for a given group.
 
         The observations for a given group are computed by calling the registered functions for each
@@ -403,6 +410,9 @@ class ObservationManager(ManagerBase):
             update_history: Whether to record a new sample in delay and observation history buffers.
                 Defaults to False, which reads recorded data without advancing either buffer. For a delay
                 buffer with no sample since initialization or reset, the current observation is returned.
+            preview: Include the current sample as if history advanced once, without modifying delay/history
+                storage or counters. Noise is still evaluated; class-based tensor processors must implement
+                :meth:`~isaaclab.utils.tensor_processors.TensorProcessor.preview`. Defaults to False.
 
         Returns:
             Depending on the group's configuration, the tensors for individual observation terms are
@@ -412,6 +422,8 @@ class ObservationManager(ManagerBase):
         Raises:
             ValueError: If input ``group_name`` is not a valid group handled by the manager.
         """
+        if preview and update_history:
+            raise ValueError("An observation preview cannot also update history")
         if group_name not in self._group_obs_term_names:
             raise ValueError(
                 f"Unable to find the group '{group_name}' in the observation manager."
@@ -424,17 +436,20 @@ class ObservationManager(ManagerBase):
 
         # evaluate terms: compute, apply custom tensor processors, add noise, clip, scale
         for term_name, term_cfg in obs_terms:
+            func = term_cfg.func
+            if preview and isinstance(func, ManagerTermBase):
+                func = func.preview
             output_spec = self._term_output_specs.get((group_name, term_name))
             owned = output_spec is not None
             if output_spec is not None:
                 shape, dtype, device = output_spec
                 obs = torch.empty(shape, dtype=dtype, device=device)
-                if term_cfg.func(self._env, **term_cfg.params, out=obs) is not obs:
+                if func(self._env, **term_cfg.params, out=obs) is not obs:
                     raise ValueError(
                         f"Observation term '{group_name}/{term_name}' must return the supplied 'out' tensor."
                     )
             else:
-                obs = term_cfg.func(self._env, **term_cfg.params)
+                obs = func(self._env, **term_cfg.params)
             # apply post-processing
             if term_cfg.tensor_processors is not None:
                 for tensor_processor_cfg in term_cfg.tensor_processors:
@@ -442,7 +457,8 @@ class ObservationManager(ManagerBase):
                     # Custom callbacks may modify or retain their input.
                     obs = obs.clone()
                     if isinstance(tensor_processor_cfg.func, tensor_processors.TensorProcessor):
-                        obs = tensor_processor_cfg.func(obs)
+                        func = tensor_processor_cfg.func
+                        obs = func.preview(obs) if preview else func(obs)
                     else:
                         obs = tensor_processor_cfg.func(obs, **tensor_processor_cfg.params)
             # Noise callbacks must not modify their input, but may return borrowed storage.
@@ -464,7 +480,7 @@ class ObservationManager(ManagerBase):
                 owned = True
             if term_name in self._group_obs_term_delay_buffer[group_name]:
                 obs = self._group_obs_term_delay_buffer[group_name][term_name].compute(
-                    obs, update_history=update_history
+                    obs, update_history=update_history, preview=preview
                 )
                 # the delay buffer returns storage independent of its history
                 owned = True
@@ -484,7 +500,13 @@ class ObservationManager(ManagerBase):
                     )
                     circular_buffer.append(obs)
 
-                obs = circular_buffer.buffer
+                history = circular_buffer.buffer
+                if preview:
+                    # the history as if it advanced once with the current sample (the stored history is unchanged)
+                    history = torch.cat((history[:, 1:], obs.unsqueeze(1)), dim=1)
+                    fresh = (circular_buffer.current_length == 0).view(self._env.num_envs, *([1] * obs.ndim))
+                    history = torch.where(fresh, obs.unsqueeze(1), history)
+                obs = history
                 owned = False
                 if term_cfg.history_newest_first:
                     # flip always copies, so the result no longer borrows the history storage

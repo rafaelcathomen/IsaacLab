@@ -206,6 +206,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             A tuple containing the observations, rewards, resets (terminated and truncated) and extras.
         """
         self.action_manager.process_action(action.to(self.device))
+        self.extras.pop("final_obs", None)
 
         self.recorder_manager.record_pre_step()
 
@@ -246,7 +247,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         if len(reset_env_ids) > 0:
             # capture the terminal observation before reset and expose it for Same-Step autoreset.
             if self.cfg.compute_final_obs:
-                self.extras["final_obs"] = self.observation_manager.compute()
+                self.extras["final_obs"] = self.observation_manager.compute(preview=True)
             self.recorder_manager.record_pre_reset(reset_env_ids)
 
             self._reset_idx(reset_env_ids)

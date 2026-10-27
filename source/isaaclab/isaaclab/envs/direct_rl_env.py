@@ -18,6 +18,7 @@ from typing import Any, ClassVar
 import gymnasium as gym
 import numpy as np
 import torch
+from torch.utils._pytree import tree_map
 
 from ..managers import EventManager
 from ..sim import SimulationContext
@@ -81,6 +82,7 @@ class DirectRLEnv(gym.Env):
         """
         # The env remains closed until initialization completes.
         self._is_closed = True
+        self._is_observation_preview = False
 
         # check that the config is valid
         validate(cfg)
@@ -405,6 +407,8 @@ class DirectRLEnv(gym.Env):
         # note: uses cached property to avoid settings lookup every step
         is_rendering = self.sim.is_rendering
 
+        self.extras.pop("final_obs", None)
+
         # physics-owned decimation covers all substeps in one call
         steps_per_call = self.cfg.decimation if self._physics_handles_decimation else 1
         for _ in range(self.cfg.decimation // steps_per_call):
@@ -679,7 +683,9 @@ class DirectRLEnv(gym.Env):
             # apply the same observation noise as the returned obs (policy space only) so the
             # bootstrapped terminal value matches the distribution the policy is trained on.
             if self.cfg.compute_final_obs:
-                self.extras["final_obs"] = self._compute_observations()
+                self.extras["final_obs"] = tree_map(
+                    lambda tensor: tensor.clone(), self._compute_observations(preview=True)
+                )
             self._reset_idx(reset_env_ids)
         return reset_env_ids
 
@@ -737,12 +743,21 @@ class DirectRLEnv(gym.Env):
         """
         raise NotImplementedError(f"Please implement the '_apply_action' method for {self.__class__.__name__}.")
 
-    def _compute_observations(self) -> VecEnvObs:
-        """Compute observations and apply configured noise to the policy observation."""
-        obs = self._get_observations()
-        if self.cfg.observation_noise_model:
-            obs["policy"] = self._observation_noise_model(obs["policy"])
-        return obs
+    def _compute_observations(self, *, preview: bool = False) -> VecEnvObs:
+        """Compute observations, marking terminal reads with ``_is_observation_preview``.
+
+        Tasks with private observation history must honor that flag instead of
+        advancing live buffers during terminal capture. Policy noise is still applied.
+        """
+        previous = self._is_observation_preview
+        self._is_observation_preview = preview
+        try:
+            obs = self._get_observations()
+            if self.cfg.observation_noise_model:
+                obs["policy"] = self._observation_noise_model(obs["policy"])
+            return obs
+        finally:
+            self._is_observation_preview = previous
 
     @abstractmethod
     def _get_observations(self) -> VecEnvObs:

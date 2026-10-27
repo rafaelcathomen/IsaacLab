@@ -9,6 +9,7 @@ import collections.abc
 import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sized
+from copy import deepcopy
 from enum import Enum
 from typing import Any
 
@@ -76,7 +77,7 @@ def class_to_dict(obj: object) -> dict[str, Any]:
     return data
 
 
-def update_class_from_dict(obj, data: dict[str, Any], _ns: str = "") -> None:
+def update_class_from_dict(obj, data: dict[str, Any], _ns: str = "", *, _allow_new_keys: bool = False) -> None:
     """Reads a dictionary and sets object variables recursively.
 
     This function performs in-place update of the class member attributes.
@@ -86,12 +87,15 @@ def update_class_from_dict(obj, data: dict[str, Any], _ns: str = "") -> None:
     Scalar replacements are not checked against the stored value's type or field annotations.
     For configclasses, enforce domain constraints in ``validate_config`` hooks and call ``validate``
     after updating; annotations are not validated automatically.
+    Dataclass dictionary fields with ``metadata={"allow_new_keys": True}`` permit additions
+    throughout their nested mappings. Other configuration fields retain their fixed schema.
 
     Args:
         obj: An instance of a class to update.
         data: Input dictionary to update from.
         _ns: Namespace of the current object. This is useful for nested configuration
             classes or dictionaries. Defaults to "".
+        _allow_new_keys: Internal propagation of an extensible dictionary field's metadata.
 
     Raises:
         TypeError: When input is not a dictionary.
@@ -99,6 +103,18 @@ def update_class_from_dict(obj, data: dict[str, Any], _ns: str = "") -> None:
             or an enum value is invalid.
         KeyError: When dictionary has a key that does not exist in the default config type.
     """
+    if isinstance(obj, dict) and _allow_new_keys:
+        for key, value in data.items():
+            if isinstance(value, Mapping) and isinstance(obj.get(key), dict):
+                update_class_from_dict(obj[key], value, _ns=f"{_ns}/{key}", _allow_new_keys=True)
+            else:
+                obj[key] = deepcopy(value)
+        return
+    dynamic_fields = {}
+    for cls in reversed(type(obj).__mro__):
+        for name, spec in cls.__dict__.get("__dataclass_fields__", {}).items():
+            if "allow_new_keys" in spec.metadata:
+                dynamic_fields[name] = spec.metadata["allow_new_keys"]
     for key, value in data.items():
         # key_ns is the full namespace of the key
         key_ns = _ns + "/" + key
@@ -110,7 +126,12 @@ def update_class_from_dict(obj, data: dict[str, Any], _ns: str = "") -> None:
             # -- 1) nested mapping → recurse ---------------------------
             if isinstance(value, Mapping):
                 # recursively call if it is a dictionary
-                update_class_from_dict(obj_mem, value, _ns=key_ns)
+                update_class_from_dict(
+                    obj_mem,
+                    value,
+                    _ns=key_ns,
+                    _allow_new_keys=_allow_new_keys or dynamic_fields.get(key, False),
+                )
                 continue
 
             # -- 2) iterable (list / tuple / etc.) ---------------------

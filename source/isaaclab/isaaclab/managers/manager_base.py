@@ -54,6 +54,9 @@ class ManagerTermBase(ABC):
 
     """
 
+    _is_observation_preview: bool = False
+    """Whether the current call previews a sample without advancing term-owned history."""
+
     def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedEnv):
         """Initialize the manager term.
 
@@ -102,6 +105,19 @@ class ManagerTermBase(ABC):
     def serialize(self) -> dict:
         """General serialization call. Includes the configuration dict."""
         return {"cfg": to_dict(self.cfg)}
+
+    def preview(self, *args, **kwargs) -> Any:
+        """Evaluate an observation with :attr:`_is_observation_preview` set for this call.
+
+        Stateful observation terms must honor this flag when updating private buffers.
+        Stateless terms use their ordinary implementation. The flag is restored on failure.
+        """
+        previous = self._is_observation_preview
+        self._is_observation_preview = True
+        try:
+            return self(*args, **kwargs)
+        finally:
+            self._is_observation_preview = previous
 
     def __call__(self, *args) -> Any:
         """Returns the value of the term required by the manager.
