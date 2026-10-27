@@ -115,6 +115,8 @@ def _resolve_checkpoint(
 ) -> str | None:
     """Resolve the checkpoint to export, or None when no published checkpoint exists."""
     if args_cli.checkpoint == "pretrained":
+        if args_cli.agent != "rsl_rl_cfg_entry_point":
+            raise ValueError("Published checkpoints require the default RSL-RL agent entry point.")
         return resolve_published_checkpoint("rsl_rl", args_cli.task, env_cfg)
     if args_cli.checkpoint and os.path.isdir(args_cli.checkpoint):
         return get_checkpoint_path(

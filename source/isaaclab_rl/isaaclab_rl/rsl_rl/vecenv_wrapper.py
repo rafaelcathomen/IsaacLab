@@ -158,6 +158,9 @@ class RslRlVecEnvWrapper(VecEnv):
             actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
         # record step information
         obs_dict, rew, terminated, truncated, extras = self.env.step(actions)
+        extras = dict(extras)
+        if "final_obs" in extras:
+            extras["final_obs"] = TensorDict(extras["final_obs"], batch_size=[self.num_envs])
         # compute dones for compatibility with RSL-RL
         dones = (terminated | truncated).to(dtype=torch.long)
         # move time out information to the extras dict

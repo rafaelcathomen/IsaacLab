@@ -181,7 +181,7 @@ def _run(args_cli: argparse.Namespace) -> None:
                 # map to this process's device; the checkpoint's tensors otherwise land on the GPU that saved them
                 runner.load(
                     resume_path,
-                    load_cfg=cli_args.checkpoint_load_cfg(args_cli.resume_optimizer_state, runner_class=agent_cfg),
+                    load_optimizer=args_cli.resume_optimizer_state,
                     map_location=agent_cfg.device,
                 )
             dump_train_configs(rank_dir, env_cfg, agent_cfg)

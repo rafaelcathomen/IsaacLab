@@ -30,7 +30,6 @@ from isaaclab.envs import DirectMARLEnvCfg, DirectRLEnvCfg
 
 from isaaclab_rl.entrypoints import PlaybackRequest, SimpleAgentRequest, TrainingRequest, api, dispatch, simple_agents
 from isaaclab_rl.entrypoints.backends import play_rlinf, train_rlinf
-from isaaclab_rl.entrypoints.backends.cli_args_rsl_rl import checkpoint_load_cfg
 from isaaclab_rl.entrypoints.simple_agents import create_random_action_policy, create_zero_action_policy
 
 
@@ -892,7 +891,6 @@ def test_rsl_rl_checkpoint_preserves_selected_optimizer_state(
     from tensordict import TensorDict
 
     from isaaclab_rl.entrypoints.backends._rsl_rl import _create_rsl_rl_runner
-    from isaaclab_rl.rsl_rl import RslRlDistillationRunnerCfg
 
     distillation = runner_class == "DistillationRunner"
     model_names = ("student", "teacher") if distillation else ("actor", "critic")
@@ -929,12 +927,7 @@ def test_rsl_rl_checkpoint_preserves_selected_optimizer_state(
     checkpoint = str(tmp_path / "model.pt")
     source.save(checkpoint)
     destination = make_runner(1e-5)
-    destination.load(
-        checkpoint,
-        load_cfg=checkpoint_load_cfg(
-            resume_optimizer_state, runner_class=RslRlDistillationRunnerCfg() if distillation else None
-        ),
-    )
+    destination.load(checkpoint, load_optimizer=resume_optimizer_state)
 
     assert destination.current_learning_iteration == source.current_learning_iteration
     if distillation:
@@ -948,3 +941,24 @@ def test_rsl_rl_checkpoint_preserves_selected_optimizer_state(
         assert not destination.alg.optimizer.state
     else:
         torch.testing.assert_close(destination_state["optimizer_state_dict"], source_state["optimizer_state_dict"])
+
+
+def test_sac_configuration_tracks_native_constructor() -> None:
+    """Typed SAC options retain native defaults and reject unknown Hydra fields."""
+    import inspect
+    from dataclasses import MISSING, fields
+
+    from rsl_rl.algorithms import SAC
+
+    from isaaclab_rl.rsl_rl import RslRlSacAlgorithmCfg
+
+    cfg = RslRlSacAlgorithmCfg()
+    parameters = inspect.signature(SAC.__init__).parameters
+    injected = {"self", "actor", "critics", "storage", "device", "multi_gpu_cfg"}
+    construction = {"class_name", "num_critics", "replay_buffer_size"}
+    assert {field.name for field in fields(cfg)} - construction == set(parameters) - injected
+    for name, parameter in parameters.items():
+        if name not in injected and not isinstance(getattr(cfg, name), type(MISSING)):
+            assert getattr(cfg, name) == parameter.default, name
+    with pytest.raises(KeyError, match="unknown_option"):
+        cfg.from_dict({"unknown_option": True})
