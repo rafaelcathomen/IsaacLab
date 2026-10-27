@@ -3,7 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""FlashSAC recipe for the existing flat G1 velocity-tracking MDP."""
+"""FlashSAC settings for the existing flat G1 velocity-tracking MDP.
+
+Gamma 0.99 and learning rates 3e-4 follow the flash_rl 11a276c and AGILE G1
+references. The action bound 2 follows the FlashSAC single-setting benchmark.
+"""
 
 from isaaclab.utils import configclass
 
@@ -47,13 +51,13 @@ class G1FlatSACRunnerCfg(RslRlSacRunnerCfg):
         num_updates=64,
         batch_size=2048,
         n_steps=3,
-        gamma=0.98,
+        gamma=0.99,
         tau=0.01,
         actor_update_interval=2,
         learning_starts=8192,
-        actor_learning_rate=1.0e-4,
-        critic_learning_rate=1.0e-4,
-        alpha_learning_rate=1.0e-4,
+        actor_learning_rate=3.0e-4,
+        critic_learning_rate=3.0e-4,
+        alpha_learning_rate=3.0e-4,
         optimizer="adam",
         weight_decay=0.0,
         max_grad_norm=None,
