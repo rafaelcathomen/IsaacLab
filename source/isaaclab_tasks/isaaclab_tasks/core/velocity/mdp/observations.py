@@ -79,8 +79,3 @@ class VelocityLabels(ManagerTermBase):
 def velocity_context(env) -> torch.Tensor:
     """Read privileged body masses for world-model conditioning and the critic."""
     return env.scene["robot"].data.body_mass.torch
-
-
-def previous_velocity_action(env) -> torch.Tensor:
-    """Read the second-most recent action, including the manager's reset value."""
-    return env.action_manager.prev_action

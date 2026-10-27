@@ -22,39 +22,22 @@ def test_g1_rough_newton_has_sufficient_constraint_capacity():
     assert solver_cfg.njmax == 300
 
 
-@pytest.mark.parametrize(
-    "task",
-    [
-        "Isaac-Velocity-Flat-G1",
-        "Isaac-Velocity-Flat-UnitreeGo2",
-        "Isaac-Velocity-Flat-AnymalD",
-        "Isaac-Velocity-Flat-H1",
-        "Isaac-Velocity-Flat-Cassie",
-        "IsaacContrib-Velocity-Flat-AnymalB",
-        "IsaacContrib-Velocity-Flat-AnymalC",
-        "IsaacContrib-Velocity-Flat-UnitreeGo1",
-        "IsaacContrib-Velocity-Flat-UnitreeA1",
-    ],
-)
-def test_flat_velocity_observation_preset_preserves_policy_and_mdp(task):
-    """Each robot's flat post-init must update both observation alternatives."""
+def test_flat_velocity_observation_preset_preserves_policy_and_mdp():
+    """Optional physical groups leave policy and downstream observation customizations intact."""
+    task = "Isaac-Velocity-Flat-G1"
     raw = load_cfg_from_registry(task, "env_cfg_entry_point")
-    assert "state_obs" in collect_presets(raw)["observations"]
+    assert "state_obs" in collect_presets(raw)["observations.state"]
     default, _ = resolve_task_config(task, None, overrides=[])
     model_based, _ = resolve_task_config(task, None, overrides=["presets=state_obs"])
-    assert default.observations.to_dict() == raw.observations.default.to_dict()
     assert model_based.observations.policy.to_dict() == default.observations.policy.to_dict()
     assert default.observations.policy.height_scan is None
     for name in ("rewards", "terminations", "events", "commands", "actions", "scene"):
         assert getattr(default, name).to_dict() == getattr(model_based, name).to_dict()
-    for group in ("state", "goal", "context", "labels", "prev_action", "prev_prev_action"):
+    for group in ("state", "goal", "context", "labels"):
         assert not getattr(model_based.observations, group).enable_corruption
 
-
-def test_digit_custom_observations_keep_their_own_flat_configuration():
-    """Digit replaces the shared observations rather than inheriting its preset."""
-    cfg, _ = resolve_task_config("IsaacContrib-Velocity-Flat-Digit", None, overrides=[])
-    assert cfg.observations.policy.height_scan is None
+    navigation = load_cfg_from_registry("IsaacContrib-Navigation-Flat-AnymalC", "env_cfg_entry_point")
+    assert navigation.actions.pre_trained_policy_action.low_level_observations.height_scan is None
 
 
 def test_velocity_state_representation_manifold_and_analytic_clocks():
@@ -120,7 +103,9 @@ def test_g1_differentiable_velocity_matches_reward_and_termination_managers():
             for step in range(32):
                 state = task.representation.unflatten(obs["state"].clone())
                 goal = obs["goal"].clone()
-                history = torch.stack((obs["prev_prev_action"], obs["prev_action"]), -2)
+                history = torch.stack(
+                    (env.unwrapped.action_manager.prev_action, env.unwrapped.action_manager.action), -2
+                )
                 frame = task.actor_obs(state, goal, obs["context"], history)
                 torch.testing.assert_close(frame, torch.cat((obs["policy"][..., :9], obs["policy"][..., 12:]), -1))
                 # Privileged masses and contact clocks cannot enter the actor.

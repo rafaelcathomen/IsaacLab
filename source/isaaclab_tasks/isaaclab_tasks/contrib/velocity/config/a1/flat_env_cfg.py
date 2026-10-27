@@ -23,8 +23,7 @@ class UnitreeA1FlatEnvCfg(UnitreeA1RoughEnvCfg):
         self.scene.terrain.terrain_generator = None
         self.scene.height_scanner = None
         # observations
-        self.observations.default.policy.height_scan = None
-        self.observations.state_obs.policy.height_scan = None
+        self.observations.policy.height_scan = None
         # rewards
         self.rewards.flat_orientation_l2.weight = -2.5
         self.rewards.feet_air_time.weight = 0.25

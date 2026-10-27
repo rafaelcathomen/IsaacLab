@@ -94,8 +94,8 @@ class RslRlSuperMimicAlgorithmCfg:
     learning_rate: float = 2e-4
     """Initial learning rate of each optimizer."""
 
-    lr_decay_updates: int = 250_000
-    """Gradient steps in each optimizer's cosine schedule."""
+    lr_decay_iterations: int = 250_000
+    """Learner iterations in the shared cosine learning-rate schedule."""
 
     lr_final_ratio: float = 0.03
     """Final learning rate relative to its initial value."""

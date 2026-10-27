@@ -31,16 +31,15 @@ class G1FlatSuperMimicRunnerCfg(RslRlSuperMimicRunnerCfg):
         "goal": ["goal"],
         "context": ["context"],
         "labels": ["labels"],
-        "prev_action": ["prev_action"],
-        "prev_prev_action": ["prev_prev_action"],
     }
     actor = RslRlSuperMimicActorCfg()
     world_model = RslRlWorldModelCfg()
     critic = RslRlMLPModelCfg(
-        hidden_dims=[512, 256, 128],
+        hidden_dims=[256, 128],
         activation="elu",
-        obs_normalization=False,
+        obs_normalization=True,
     )
     algorithm = RslRlSuperMimicAlgorithmCfg(
+        replay_buffer_size=4_096_000,
         task_cfg=RslRlSuperMimicTaskCfg(class_name="isaaclab_tasks.core.velocity.supermimic:VelocityTask"),
     )

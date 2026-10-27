@@ -38,7 +38,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from . import mdp
 
@@ -188,11 +188,6 @@ class ObservationsCfg:
     # observation groups
     policy: PolicyCfg = PolicyCfg()
 
-
-@configclass
-class StateObservationsCfg(ObservationsCfg):
-    """Velocity observations with noise-free physical state and contact labels."""
-
     @configclass
     class StateCfg(ObsGroup):
         state = ObsTerm(func=mdp.VelocityState)
@@ -213,30 +208,10 @@ class StateObservationsCfg(ObservationsCfg):
         contacts = ObsTerm(func=mdp.VelocityLabels)
         enable_corruption = False
 
-    @configclass
-    class PreviousActionCfg(ObsGroup):
-        action = ObsTerm(func=mdp.last_action)
-        enable_corruption = False
-
-    @configclass
-    class PreviousPreviousActionCfg(ObsGroup):
-        action = ObsTerm(func=mdp.previous_velocity_action)
-        enable_corruption = False
-
-    state: StateCfg = StateCfg()
-    goal: GoalCfg = GoalCfg()
-    context: ContextCfg = ContextCfg()
-    labels: LabelsCfg = LabelsCfg()
-    prev_action: PreviousActionCfg = PreviousActionCfg()
-    prev_prev_action: PreviousPreviousActionCfg = PreviousPreviousActionCfg()
-
-
-@configclass
-class VelocityObservationsCfg(PresetCfg):
-    """Keep existing policy observations by default; opt into model-based state."""
-
-    default: ObservationsCfg = ObservationsCfg()
-    state_obs: StateObservationsCfg = StateObservationsCfg()
+    state = preset(default=None, state_obs=StateCfg())
+    goal = preset(default=None, state_obs=GoalCfg())
+    context = preset(default=None, state_obs=ContextCfg())
+    labels = preset(default=None, state_obs=LabelsCfg())
 
 
 @configclass
@@ -390,7 +365,7 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
     # Scene settings
     scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
-    observations: VelocityObservationsCfg = VelocityObservationsCfg()
+    observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
     # MDP settings
