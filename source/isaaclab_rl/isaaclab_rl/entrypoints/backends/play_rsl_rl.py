@@ -143,7 +143,7 @@ def run(argv: list[str]) -> None:
             if model_based:
                 runner.load(resume_path, policy_only=True)
             else:
-                runner.load(resume_path)
+                runner.load(resume_path, map_location=agent_cfg.device)
             policy = runner.get_inference_policy(device=env.device)
 
             export_model_dir = os.path.join(log_dir, "exported")
