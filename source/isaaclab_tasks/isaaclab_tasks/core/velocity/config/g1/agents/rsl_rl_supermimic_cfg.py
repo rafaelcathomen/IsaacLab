@@ -41,5 +41,7 @@ class G1FlatSuperMimicRunnerCfg(RslRlSuperMimicRunnerCfg):
     )
     algorithm = RslRlSuperMimicAlgorithmCfg(
         replay_buffer_size=4_096_000,
+        # dt 0.02 * (track_lin 1 + track_ang 1 + feet_air_time 0.75 * 0.4) / (1 - gamma 0.99).
+        value_cap=4.6,
         task_cfg=RslRlSuperMimicTaskCfg(class_name="isaaclab_tasks.core.velocity.supermimic:VelocityTask"),
     )

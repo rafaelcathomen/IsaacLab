@@ -121,6 +121,9 @@ class RslRlSuperMimicAlgorithmCfg:
     action_noise: float = 0.1
     """Standard deviation of additive collection noise."""
 
+    value_cap: float | None = None
+    """Optional upper bound on bootstrap values and value targets."""
+
     use_mixed_precision: bool = False
     """Whether to use BF16 matrix operations during learning."""
 

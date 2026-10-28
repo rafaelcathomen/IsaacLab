@@ -28,7 +28,20 @@ def test_flat_velocity_observation_preset_preserves_policy_and_mdp():
     raw = load_cfg_from_registry(task, "env_cfg_entry_point")
     assert "state_obs" in collect_presets(raw)["observations.state"]
     default, _ = resolve_task_config(task, None, overrides=[])
-    model_based, _ = resolve_task_config(task, None, overrides=["presets=state_obs"])
+    model_based, agent_cfg = resolve_task_config(
+        task, "rsl_rl_supermimic_cfg_entry_point", overrides=["presets=state_obs"]
+    )
+    rewards = model_based.rewards
+    max_step_reward = (
+        model_based.sim.dt
+        * model_based.decimation
+        * (
+            rewards.track_lin_vel_xy_exp.weight
+            + rewards.track_ang_vel_z_exp.weight
+            + rewards.feet_air_time.weight * rewards.feet_air_time.params["threshold"]
+        )
+    )
+    assert agent_cfg.algorithm.value_cap == pytest.approx(max_step_reward / (1 - agent_cfg.algorithm.gamma))
     assert model_based.observations.policy.to_dict() == default.observations.policy.to_dict()
     assert default.observations.policy.height_scan is None
     for name in ("rewards", "terminations", "events", "commands", "actions", "scene"):

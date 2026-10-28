@@ -5,3 +5,4 @@
   approximations; per-term G1 tests compare the physical rewards and terminations with the actual managers.
   Velocity configurations constructed directly, without Hydra, must pass through
   ``isaaclab_tasks.utils.resolve_presets`` before environment creation.
+* Bounded G1 SuperMimic bootstrap values and critic targets by the task's maximum discounted return.
