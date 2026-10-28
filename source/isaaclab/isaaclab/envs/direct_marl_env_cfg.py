@@ -87,13 +87,22 @@ class DirectMARLEnvCfg:
     group once before reset, command updates and interval events in ``extras[agent]["final_obs"]``.
     The tensors live on ``env.device`` and own their storage. Only rows for environments that
     reset are valid for bootstrapping; they use the command from before this step's command update.
-    The key is absent on steps without resets.
+    The key is absent on steps without resets unless :attr:`final_obs_every_step` is enabled.
 
     Preview reads include the current sample in delay and observation history without committing
     it. Custom stateful observation terms should check ``env.is_observation_preview``; stateful
     tensor processors should override their ``preview`` method. Observation noise is evaluated as
     in ordinary observations. Extra reads from active recorder terms remain outside this guarantee.
     Warp environments do not support terminal capture and warn when this flag is enabled.
+    """
+
+    final_obs_every_step: bool = False
+    """Whether to preview every environment's physical successor on every step. Defaults to False.
+
+    This enables capture even when :attr:`compute_final_obs` is False. Capture precedes resets and
+    interval events, using the same preview semantics. Every row of ``extras[agent]["final_obs"]``
+    is valid and ``extras[agent]["final_obs_every_step"]`` is True when that agent's snapshot was produced.
+    Public resets do not produce this signal. Warp environments warn when capture is enabled.
     """
 
     episode_length_s: float = MISSING

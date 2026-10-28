@@ -438,6 +438,8 @@ class ManagerBasedEnv:
         Returns:
             A tuple containing the observations and extras.
         """
+        self.extras.pop("final_obs", None)
+        self.extras.pop("final_obs_every_step", None)
         if env_ids is None:
             env_ids = slice(None)
         # trigger recorder terms for pre-reset calls
@@ -500,6 +502,8 @@ class ManagerBasedEnv:
         """
         if env_ids is None:
             env_ids = slice(None)
+        self.extras.pop("final_obs", None)
+        self.extras.pop("final_obs_every_step", None)
         # trigger recorder terms for pre-reset calls
         self.recorder_manager.record_pre_reset(env_ids)
 
