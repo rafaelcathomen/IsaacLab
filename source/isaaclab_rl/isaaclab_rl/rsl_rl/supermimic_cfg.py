@@ -6,6 +6,7 @@
 """Typed configuration for model-based SuperMimic learning."""
 
 from dataclasses import MISSING
+from typing import Literal
 
 from isaaclab.utils import configclass
 
@@ -112,17 +113,41 @@ class RslRlSuperMimicAlgorithmCfg:
     critic_minibatches: int = 4
     """Minibatches per critic epoch."""
 
+    num_critics: int = 1
+    """Number of independently initialized critics, 1 or 2; twin critics bootstrap targets from their minimum."""
+
+    actor_value_reduction: Literal["mean", "min"] = "mean"
+    """Combination of the twin-critic terminal values in the actor objective."""
+
+    critic_zero_init: bool = False
+    """Whether to zero each critic output layer so initial values are zero."""
+
     warmup_steps: int = 64
     """Stored steps per environment required before learning."""
 
     world_model_warmup_iterations: int = 500
     """Learner iterations fitting only dynamics."""
 
+    critic_warmup: bool = False
+    """Whether to also fit the critics on imagined rollouts of the fixed actor during world-model warmup."""
+
     action_noise: float = 0.1
     """Standard deviation of additive collection noise."""
 
     noise_faithful_imagination: bool = False
     """Whether imagined actions include the same additive noise used during collection."""
+
+    entropy_regularization: bool = False
+    """Whether to learn the action noise and add a normalized, dt-scaled entropy bonus to imagined rewards."""
+
+    init_alpha: float = 1.0
+    """Initial entropy temperature, in the units of task reward weights."""
+
+    target_entropy_scale: float = 0.5
+    """Positive scale of the target entropy, minus this scale times the action dimension in nats."""
+
+    alpha_learning_rate: float = 5e-3
+    """Constant learning rate of the log-temperature."""
 
     max_step_reward: float | None = None
     """Optional per-step reward bound used to cap values at the maximum discounted return."""
