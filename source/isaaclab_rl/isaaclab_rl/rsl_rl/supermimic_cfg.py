@@ -121,6 +121,9 @@ class RslRlSuperMimicAlgorithmCfg:
     action_noise: float = 0.1
     """Standard deviation of additive collection noise."""
 
+    noise_faithful_imagination: bool = False
+    """Whether imagined actions include the same additive noise used during collection."""
+
     max_step_reward: float | None = None
     """Optional per-step reward bound used to cap values at the maximum discounted return."""
 
@@ -129,6 +132,9 @@ class RslRlSuperMimicAlgorithmCfg:
 
     max_grad_norm: float = 1.0
     """Global gradient-norm limit for each model."""
+
+    actor_grad_clip_value: float | None = 0.1
+    """Optional elementwise actor-gradient limit applied after the norm limit."""
 
 
 @configclass
