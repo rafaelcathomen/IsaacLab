@@ -138,16 +138,20 @@ class RslRlSuperMimicAlgorithmCfg:
     """Whether imagined actions include the same additive noise used during collection."""
 
     entropy_regularization: bool = False
-    """Whether to learn the action noise and add a normalized, dt-scaled entropy bonus to imagined rewards."""
+    """Whether to learn the action noise and add a normalized, dt-scaled entropy bonus to imagined rewards.
+
+    The temperature follows the shared learning rate. Below the target entropy the bonus is negative and, like any
+    negative reward, favors imagined termination.
+    """
 
     init_alpha: float = 1.0
     """Initial entropy temperature, in the units of task reward weights."""
 
-    target_entropy_scale: float = 0.5
-    """Positive scale of the target entropy, minus this scale times the action dimension in nats."""
+    target_entropy_scale: float | None = None
+    """Positive scale ``s`` of the target entropy ``-s * num_actions`` in nats; SAPO uses 0.5.
 
-    alpha_learning_rate: float = 5e-3
-    """Constant learning rate of the log-temperature."""
+    ``None`` targets the initial :attr:`action_noise` (below 0.242), so the entropy bonus starts at zero.
+    """
 
     max_step_reward: float | None = None
     """Optional per-step reward bound used to cap values at the maximum discounted return."""
