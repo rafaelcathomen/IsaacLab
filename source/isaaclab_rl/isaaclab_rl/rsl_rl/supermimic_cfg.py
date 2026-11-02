@@ -98,6 +98,9 @@ class RslRlSuperMimicAlgorithmCfg:
     lr_decay_iterations: int = 250_000
     """Learner iterations in the shared cosine learning-rate schedule."""
 
+    lr_decay_iterations_by_optimizer: dict[str, int | None] | None = None
+    """Optional per-optimizer decay lengths; None entries keep those learning rates constant."""
+
     lr_final_ratio: float = 0.03
     """Final learning rate relative to its initial value."""
 
