@@ -3,45 +3,19 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""SuperMimic settings for flat G1 velocity with the state_obs observation preset."""
+"""SuperMimic settings for flat G1 velocity with the state_obs preset.
 
-from isaaclab.utils import configclass
+The per-step positive reward bound is 0.02 * (1 + 1 + 0.75 * 0.4).
+"""
 
-from isaaclab_rl.rsl_rl import (
-    RslRlMLPModelCfg,
-    RslRlSuperMimicActorCfg,
-    RslRlSuperMimicAlgorithmCfg,
-    RslRlSuperMimicRunnerCfg,
-    RslRlSuperMimicTaskCfg,
-    RslRlWorldModelCfg,
-)
+from isaaclab.utils import configclass, replace
+
+from ...rsl_rl_supermimic_cfg import FlatVelocitySuperMimicRunnerCfg
 
 
 @configclass
-class G1FlatSuperMimicRunnerCfg(RslRlSuperMimicRunnerCfg):
-    """Collect one physical step before applying fractional learner updates."""
+class G1FlatSuperMimicRunnerCfg(FlatVelocitySuperMimicRunnerCfg):
+    """Use the shared learner with the robot's physical reward bound."""
 
-    num_steps_per_env = 1
-    max_iterations = 36_000
-    save_interval = 1200
     experiment_name = "g1_flat_supermimic"
-    clip_actions = None
-    obs_groups = {
-        "state": ["state"],
-        "goal": ["goal"],
-        "context": ["context"],
-        "labels": ["labels"],
-    }
-    actor = RslRlSuperMimicActorCfg()
-    world_model = RslRlWorldModelCfg()
-    critic = RslRlMLPModelCfg(
-        hidden_dims=[256, 128],
-        activation="elu",
-        obs_normalization=True,
-    )
-    algorithm = RslRlSuperMimicAlgorithmCfg(
-        replay_buffer_size=4_096_000,
-        # dt 0.02 * (track_lin 1 + track_ang 1 + feet_air_time 0.75 * 0.4).
-        max_step_reward=0.046,
-        task_cfg=RslRlSuperMimicTaskCfg(class_name="isaaclab_tasks.core.velocity.supermimic:VelocityTask"),
-    )
+    algorithm = replace(FlatVelocitySuperMimicRunnerCfg().algorithm, max_step_reward=0.046)

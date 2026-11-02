@@ -21,35 +21,45 @@ def _feet(env) -> tuple[list[int], list[int]]:
     return asset_ids, sensor_ids
 
 
+def _uses_stance_history(env) -> bool:
+    """Read completed stance durations only for rewards that consume them."""
+    return any(
+        term is not None and term.weight != 0 and term.func.__name__ == "feet_air_time_variance"
+        for term in vars(env.cfg.rewards).values()
+    )
+
+
 class VelocityState(ManagerTermBase):
     """Read physical state without modifying observation history or contact timers.
 
     Order: body linear/angular velocity, root XYZW quaternion, height, joint
     position/velocity, foot world velocity, current air/contact and last air time.
+    Air-time variance rewards also observe the last completed contact time.
     """
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         self._feet, self._sensor_feet = _feet(env)
+        self._stance_history = _uses_stance_history(env)
 
     def __call__(self, env) -> torch.Tensor:
         data = env.scene["robot"].data
         contact = env.scene.sensors[env.cfg.rewards.feet_air_time.params["sensor_cfg"].name].data
-        return torch.cat(
-            (
-                data.root_lin_vel_b.torch,
-                data.root_ang_vel_b.torch,
-                data.root_quat_w.torch,
-                data.root_pos_w.torch[:, 2:3] - env.scene.env_origins[:, 2:3],
-                data.joint_pos.torch,
-                data.joint_vel.torch,
-                data.body_lin_vel_w.torch[:, self._feet].flatten(1),
-                contact.current_air_time.torch[:, self._sensor_feet],
-                contact.current_contact_time.torch[:, self._sensor_feet],
-                contact.last_air_time.torch[:, self._sensor_feet],
-            ),
-            dim=-1,
+        parts = (
+            data.root_lin_vel_b.torch,
+            data.root_ang_vel_b.torch,
+            data.root_quat_w.torch,
+            data.root_pos_w.torch[:, 2:3] - env.scene.env_origins[:, 2:3],
+            data.joint_pos.torch,
+            data.joint_vel.torch,
+            data.body_lin_vel_w.torch[:, self._feet].flatten(1),
+            contact.current_air_time.torch[:, self._sensor_feet],
+            contact.current_contact_time.torch[:, self._sensor_feet],
+            contact.last_air_time.torch[:, self._sensor_feet],
         )
+        if self._stance_history:
+            parts += (contact.last_contact_time.torch[:, self._sensor_feet],)
+        return torch.cat(parts, dim=-1)
 
 
 class VelocityLabels(ManagerTermBase):
@@ -57,23 +67,25 @@ class VelocityLabels(ManagerTermBase):
 
     Timer contacts use the sensor's own threshold through its contact clock.
     Force-history contacts use 1 N, matching velocity sliding and illegal contact.
+    Air-time variance rewards additionally observe first-air events.
     """
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         _, self._feet = _feet(env)
+        self._stance_history = _uses_stance_history(env)
 
     def __call__(self, env) -> torch.Tensor:
         sensor = env.scene.sensors[env.cfg.rewards.feet_air_time.params["sensor_cfg"].name]
         forces = sensor.data.net_normal_forces_w_history.torch
-        return torch.cat(
-            (
-                sensor.data.current_contact_time.torch[:, self._feet] > 0,
-                forces.norm(dim=-1).amax(dim=1) > 1.0,
-                sensor.compute_first_contact(env.step_dt).torch[:, self._feet],
-            ),
-            dim=-1,
-        ).float()
+        parts = (
+            sensor.data.current_contact_time.torch[:, self._feet] > 0,
+            forces.norm(dim=-1).amax(dim=1) > 1.0,
+            sensor.compute_first_contact(env.step_dt).torch[:, self._feet],
+        )
+        if self._stance_history:
+            parts += (sensor.compute_first_air(env.step_dt).torch[:, self._feet],)
+        return torch.cat(parts, dim=-1).float()
 
 
 def velocity_context(env) -> torch.Tensor:

@@ -41,9 +41,10 @@ def test_flat_velocity_observation_preset_preserves_policy_and_mdp():
     assert navigation.actions.pre_trained_policy_action.low_level_observations.height_scan is None
 
 
-def test_g1_supermimic_max_step_reward_matches_reward_terms():
+@pytest.mark.parametrize("robot", ["G1", "H1", "Cassie", "UnitreeGo2"])
+def test_supermimic_max_step_reward_matches_reward_terms(robot):
     env_cfg, agent_cfg = resolve_task_config(
-        "Isaac-Velocity-Flat-G1", "rsl_rl_supermimic_cfg_entry_point", overrides=[]
+        f"Isaac-Velocity-Flat-{robot}", "rsl_rl_supermimic_cfg_entry_point", overrides=[]
     )
     rewards = env_cfg.rewards
     assert {name for name, term in vars(rewards).items() if term is not None and term.weight > 0} == {
@@ -51,25 +52,31 @@ def test_g1_supermimic_max_step_reward_matches_reward_terms():
         "track_ang_vel_z_exp",
         "feet_air_time",
     }
-    assert rewards.feet_air_time.func is mdp.feet_air_time_positive_biped
+    if robot == "UnitreeGo2":
+        assert rewards.feet_air_time.func is mdp.feet_air_time
+        air_time_bound = 4 * (env_cfg.episode_length_s - rewards.feet_air_time.params["threshold"])
+    else:
+        assert rewards.feet_air_time.func is mdp.feet_air_time_positive_biped
+        air_time_bound = rewards.feet_air_time.params["threshold"]
     max_step_reward = (
         env_cfg.sim.dt
         * env_cfg.decimation
         * (
             rewards.track_lin_vel_xy_exp.weight
             + rewards.track_ang_vel_z_exp.weight
-            + rewards.feet_air_time.weight * rewards.feet_air_time.params["threshold"]
+            + rewards.feet_air_time.weight * air_time_bound
         )
     )
     assert agent_cfg.algorithm.max_step_reward == pytest.approx(max_step_reward)
 
 
-def test_velocity_state_representation_manifold_and_analytic_clocks():
+@pytest.mark.parametrize("stance_history", [False, True])
+def test_velocity_state_representation_manifold_and_analytic_clocks(stance_history):
     """World-model tangent predictions must roundtrip rotations without learning clocks."""
     from isaaclab_tasks.core.velocity.supermimic import VelocityStateRepresentation
 
-    representation = VelocityStateRepresentation(num_joints=3, num_feet=2)
-    flat = torch.randn(2, 4, 29, requires_grad=True)
+    representation = VelocityStateRepresentation(num_joints=3, num_feet=2, stance_history=stance_history)
+    flat = torch.randn(2, 4, 31 if stance_history else 29, requires_grad=True)
     state = list(representation.unflatten(flat))
     state[2] = torch.nn.functional.normalize(state[2], dim=-1)
     state = tuple(state)
@@ -90,8 +97,9 @@ def test_velocity_state_representation_manifold_and_analytic_clocks():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires Newton on CUDA.")
-def test_g1_differentiable_velocity_matches_reward_and_termination_managers():
-    """Compare all 16 terms against the actual physical managers on transitions.
+@pytest.mark.parametrize("robot_name", ["G1", "H1", "Cassie", "UnitreeGo2"])
+def test_differentiable_velocity_matches_reward_and_termination_managers(robot_name):
+    """Compare every configured term against the physical managers on transitions.
 
     PD torque and policy-rate qacc are approximations, with explicit absolute
     tolerances in weighted, dt-scaled reward units for this bounded-action probe.
@@ -105,7 +113,7 @@ def test_g1_differentiable_velocity_matches_reward_and_termination_managers():
     from isaaclab_tasks.core.velocity.supermimic import VelocityTask
 
     cfg, _ = resolve_task_config(
-        "Isaac-Velocity-Flat-G1",
+        f"Isaac-Velocity-Flat-{robot_name}",
         None,
         overrides=["presets=state_obs", "physics=newton_mjwarp", "visualizer=none"],
     )
@@ -114,13 +122,18 @@ def test_g1_differentiable_velocity_matches_reward_and_termination_managers():
     cfg.final_obs_every_step = True
     cfg.observations.policy.enable_corruption = False
     approximation_tolerances = {"dof_torques_l2": 0.0001, "dof_acc_l2": 0.005}
+    if robot_name == "H1":
+        approximation_tolerances["dof_acc_l2"] = 0.02
+    elif robot_name == "Cassie":
+        approximation_tolerances.update(dof_torques_l2=0.0003, dof_acc_l2=0.02)
+    elif robot_name == "UnitreeGo2":
+        approximation_tolerances.update(dof_torques_l2=0.03, dof_acc_l2=1e-6)
     with launch_simulation(cfg, {"visualizer": ["none"]}):
-        env = gym.make("Isaac-Velocity-Flat-G1", cfg=cfg)
+        env = gym.make(f"Isaac-Velocity-Flat-{robot_name}", cfg=cfg)
         try:
             obs, _ = env.reset()
             task = VelocityTask(env=env, device=env.unwrapped.device)
             assert task.dt == pytest.approx(0.02)
-            assert len(task.rewards) == 16
             phase = torch.linspace(0, 2 * torch.pi, 16 * task.num_actions, device=task.device).reshape(16, -1)
             for step in range(32):
                 state = task.representation.unflatten(obs["state"].clone())
@@ -144,17 +157,43 @@ def test_g1_differentiable_velocity_matches_reward_and_termination_managers():
                 for name, predicted in terms.items():
                     reference = torch.tensor(actual[name], device=task.device)
                     torch.testing.assert_close(
-                        predicted, reference, atol=approximation_tolerances.get(name, 1e-6), rtol=1e-5
+                        predicted,
+                        reference,
+                        atol=approximation_tolerances.get(name, 1e-6),
+                        rtol=1e-5,
+                        msg=lambda error: f"{name}: {error}",
                     )
                 torch.testing.assert_close(task.termination_prob(successor, goal, final["labels"]), terminated.float())
+            if robot_name == "UnitreeGo2":
+                from isaaclab.actuators import DCMotor
+                from isaaclab.utils.types import ArticulationActions
+
+                asset = env.unwrapped.scene["robot"]
+                motor = DCMotor(asset.cfg.actuators["base_legs"], asset.joint_names, slice(None), 16, task.device)
+                speed = torch.linspace(-2.5, 2.5, 16, device=task.device)[:, None] * task.no_load_speed
+                target = task.default_pos.expand_as(speed)
+                position = target - task.damping * speed / task.stiffness
+                controlled = successor[:4] + (position, speed) + successor[6:]
+                command = ArticulationActions(
+                    joint_positions=target,
+                    joint_velocities=torch.zeros_like(speed),
+                    joint_efforts=torch.zeros_like(speed),
+                )
+                effort = motor.compute(command, position, speed).joint_efforts
+                predicted = task.reward_terms(
+                    state, torch.zeros_like(actions), controlled, goal, history, final["labels"]
+                )["dof_torques_l2"]
+                reference = effort.square().sum(-1) * cfg.rewards.dof_torques_l2.weight * task.dt
+                torch.testing.assert_close(predicted, reference)
             # A positive physical contact prevents an always-zero termination
             # head from passing the otherwise mostly upright transition sample.
             robot = env.unwrapped.scene["robot"]
             fallen_pose = robot.data.root_link_pose_w.torch[:1].clone()
-            fallen_pose[..., 2] = env.unwrapped.scene.env_origins[0, 2] + 0.05
-            fallen_pose[..., 3:] = torch.tensor([0.0, 2**-0.5, 0.0, 2**-0.5], device=task.device)
+            fallen_pose[..., 2] = env.unwrapped.scene.env_origins[0, 2] + cfg.scene.robot.init_state.pos[2] + 0.1
+            fallen_pose[..., 3:] = torch.tensor([0.0, 1.0, 0.0, 0.0], device=task.device)
             robot.write_root_pose_to_sim_index(root_pose=fallen_pose, env_ids=[0])
-            for _ in range(4):
+            robot.write_root_velocity_to_sim_index(root_velocity=torch.zeros(1, 6, device=task.device), env_ids=[0])
+            for _ in range(64):
                 _, _, terminated, _, extras = env.step(torch.zeros_like(actions))
                 contact_state = task.representation.unflatten(extras["final_obs"]["state"])
                 contact_probability = task.termination_prob(contact_state, goal, extras["final_obs"]["labels"])

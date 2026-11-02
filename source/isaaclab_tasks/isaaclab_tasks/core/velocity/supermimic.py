@@ -7,8 +7,8 @@
 
 Reward weights, entity selections, actuator gains and action mappings come from
 the resolved robot environment. Contact heads predict sensor events; they do not
-expose privileged contact or mass inputs to the actor. Torque uses a clipped PD
-approximation, and joint acceleration uses policy-rate velocity differences.
+expose privileged contact or mass inputs to the actor. Torque uses a PD approximation
+with the configured effort and DC speed limits. Joint acceleration uses policy-rate velocity differences.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ from typing import TYPE_CHECKING
 import torch
 from rsl_rl.algorithms.supermimic_task import DifferentiableTask, State
 
-from isaaclab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg
+from isaaclab.actuators import DCMotorCfg, IdealPDActuatorCfg, ImplicitActuatorCfg
 from isaaclab.actuators.actuator_base import resolve_joint_parameter
 from isaaclab.envs.mdp.actions import JointPositionAction
 from isaaclab.utils.math import normalize, quat_apply, quat_apply_inverse, quat_conjugate, quat_mul, yaw_quat
 
-from .mdp.observations import _feet
+from .mdp.observations import _feet, _uses_stance_history
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -38,8 +38,10 @@ class VelocityStateRepresentation:
     learned targets. All methods preserve arbitrary leading batch dimensions.
     """
 
-    def __init__(self, num_joints: int, num_feet: int, device: str = "cpu") -> None:
+    def __init__(self, num_joints: int, num_feet: int, device: str = "cpu", stance_history: bool = False) -> None:
         self.widths = (3, 3, 4, 1, num_joints, num_joints, 3 * num_feet, num_feet, num_feet, num_feet)
+        if stance_history:
+            self.widths += (num_feet,)
         self.increment_widths = (3, 3, 3, 1, num_joints, num_joints, 3 * num_feet)
         self.increment_dim = sum(self.increment_widths)
         self.error_floor = torch.full((self.increment_dim,), 0.01, device=device)
@@ -78,7 +80,7 @@ class VelocityStateRepresentation:
 class VelocityTask(DifferentiableTask):
     """Robot-parameterized differentiable task for the shared flat velocity MDP.
 
-    G1 flat is the first consumer. Commands are held over an imagined horizon;
+    Commands are held over an imagined horizon;
     real command resampling is read from the next physical ``goal`` observation.
     Analytic contact clocks use policy-step resolution, approximating contact
     changes within physics substeps. Real reward parity uses observed clocks.
@@ -96,8 +98,9 @@ class VelocityTask(DifferentiableTask):
         self.num_feet = len(self.foot_ids)
         sensor = owner.scene.sensors[owner.cfg.rewards.feet_air_time.params["sensor_cfg"].name]
         self.num_bodies = sensor.num_sensors
-        self.num_labels = self.num_bodies + 2 * self.num_feet
-        self.representation = VelocityStateRepresentation(self.num_joints, self.num_feet, device)
+        self.stance_history = _uses_stance_history(owner)
+        self.num_labels = self.num_bodies + (3 if self.stance_history else 2) * self.num_feet
+        self.representation = VelocityStateRepresentation(self.num_joints, self.num_feet, device, self.stance_history)
         self.default_pos = data.default_joint_pos.torch[0].to(device).clone()
         self.default_vel = data.default_joint_vel.torch[0].to(device).clone()
         self.limits = data.soft_joint_pos_limits.torch[0].to(device).clone()
@@ -142,7 +145,9 @@ class VelocityTask(DifferentiableTask):
             "action_rate_l2",
             "feet_air_time",
             "feet_air_time_positive_biped",
+            "feet_air_time_variance",
             "feet_slide",
+            "base_height_l2",
             "joint_pos_limits",
             "joint_deviation_l1",
         }
@@ -151,8 +156,19 @@ class VelocityTask(DifferentiableTask):
                 raise ValueError(f"Unsupported differentiable velocity reward: {name} ({cfg.func.__name__}).")
         sensor_name = owner.cfg.rewards.feet_air_time.params["sensor_cfg"].name
         for cfg in (*self.rewards.values(), *self.terminations.values()):
-            if "sensor_cfg" in cfg.params and cfg.params["sensor_cfg"].name != sensor_name:
+            if cfg.params.get("sensor_cfg") is not None and cfg.params["sensor_cfg"].name != sensor_name:
                 raise ValueError("Velocity contact terms must use the feet_air_time sensor.")
+            if cfg.func.__name__ == "base_height_l2" and cfg.params.get("sensor_cfg") is not None:
+                raise ValueError("VelocityTask supports base-height rewards on flat terrain without a ray sensor.")
+            if cfg.func.__name__ == "feet_air_time_variance" and (
+                isinstance(cfg.params["sensor_cfg"].body_ids, slice)
+                or set(torch.as_tensor(cfg.params["sensor_cfg"].body_ids).tolist()) != set(self.sensor_foot_ids)
+                or self.num_feet < 2
+            ):
+                raise ValueError(
+                    f"Velocity air-time variance must select the same two or more feet: "
+                    f"selected={cfg.params['sensor_cfg'].body_ids}, feet={self.sensor_foot_ids}."
+                )
             if cfg.func.__name__ == "feet_slide":
                 sensor_ids, asset_ids = cfg.params["sensor_cfg"].body_ids, cfg.params["asset_cfg"].body_ids
                 if (
@@ -180,6 +196,9 @@ class VelocityTask(DifferentiableTask):
         self.stiffness = torch.zeros(self.num_joints, device=device)
         self.damping = torch.zeros_like(self.stiffness)
         self.effort_limit = torch.full_like(self.stiffness, torch.inf)
+        self.dc_joints = torch.zeros(self.num_joints, dtype=torch.bool, device=device)
+        self.stall_effort = torch.ones_like(self.stiffness)
+        self.no_load_speed = torch.ones_like(self.stiffness)
         for cfg in robot.cfg.actuators.values():
             if not isinstance(cfg, (IdealPDActuatorCfg, ImplicitActuatorCfg)):
                 raise ValueError("VelocityTask's torque approximation requires PD actuator gains.")
@@ -189,6 +208,13 @@ class VelocityTask(DifferentiableTask):
                 getattr(self, parameter)[ids] = values[0]
             limit = cfg.actuator_effort_limit if cfg.actuator_effort_limit is not None else cfg.joint_effort_limit
             self.effort_limit[ids] = resolve_joint_parameter(limit, torch.inf, names, 1, device)[0]
+            if isinstance(cfg, DCMotorCfg):
+                self.dc_joints[ids] = True
+                self.stall_effort[ids] = resolve_joint_parameter(cfg.saturation_effort, None, names, 1, device)[0]
+                self.no_load_speed[ids] = resolve_joint_parameter(cfg.actuator_velocity_limit, None, names, 1, device)[
+                    0
+                ]
+        self.has_dc_motors = bool(self.dc_joints.any())
 
     def actor_obs(
         self, state: State, goal: torch.Tensor, context: torch.Tensor, prev_actions: torch.Tensor
@@ -247,11 +273,15 @@ class VelocityTask(DifferentiableTask):
     def post_dynamics(self, state: State, next_state: State, labels: torch.Tensor) -> State:
         """Advance contact clocks from soft contact events at policy resolution."""
         contact = labels[..., : self.num_feet]
-        first = labels[..., self.num_feet + self.num_bodies :]
+        first = labels[..., self.num_feet + self.num_bodies : 2 * self.num_feet + self.num_bodies]
         air = (1 - contact) * (state[7] + self.dt)
         stance = contact * (state[8] + self.dt)
         last_air = first * state[7] + (1 - first) * state[9]
-        return next_state[:7] + (air, stance, last_air)
+        clocks = (air, stance, last_air)
+        if self.stance_history:
+            first_air = labels[..., -self.num_feet :]
+            clocks += (first_air * state[8] + (1 - first_air) * state[10],)
+        return next_state[:7] + clocks
 
     def termination_prob(
         self, next_state: State, goal: torch.Tensor, labels: torch.Tensor | None = None
@@ -311,12 +341,22 @@ class VelocityTask(DifferentiableTask):
                 value = ang[..., :2].square().sum(-1)
             elif kind == "flat_orientation_l2":
                 value = gravity[..., :2].square().sum(-1)
+            elif kind == "base_height_l2":
+                value = (next_state[3].squeeze(-1) - params["target_height"]).square()
             elif kind == "joint_torques_l2":
                 target = self.default_pos.expand_as(q).clone()
                 target[..., self.action_joints] = actions * self.action_scale + self.action_offset
-                torque = (self.stiffness * (target - q) - self.damping * dq).clamp(
-                    -self.effort_limit, self.effort_limit
-                )
+                lower, upper = -self.effort_limit, self.effort_limit
+                if self.has_dc_motors:
+                    speed_limit = self.no_load_speed * (1 + self.effort_limit / self.stall_effort)
+                    speed = dq.clamp(-speed_limit, speed_limit)
+                    upper = torch.where(
+                        self.dc_joints, (self.stall_effort * (1 - speed / self.no_load_speed)).minimum(upper), upper
+                    )
+                    lower = torch.where(
+                        self.dc_joints, (self.stall_effort * (-1 - speed / self.no_load_speed)).maximum(lower), lower
+                    )
+                torque = (self.stiffness * (target - q) - self.damping * dq).clamp(lower, upper)
                 value = torque[..., ids].square().sum(-1)
             elif kind == "joint_acc_l2":
                 value = ((dq - state[5]) / self.dt)[..., ids].square().sum(-1)
@@ -340,8 +380,12 @@ class VelocityTask(DifferentiableTask):
                 value = in_mode.amin(-1).clamp(max=params["threshold"]) * single
                 value = value * (goal[..., :2].norm(dim=-1) > 0.1)
             elif kind == "feet_air_time":
-                first = labels[..., self.num_feet + self.num_bodies :]
+                first = labels[..., self.num_feet + self.num_bodies : 2 * self.num_feet + self.num_bodies]
                 value = ((next_state[9] - params["threshold"]) * first).sum(-1)
+                value = value * (goal[..., :2].norm(dim=-1) > 0.1)
+            elif kind == "feet_air_time_variance":
+                limit = params.get("max_time", 0.5)
+                value = next_state[9].clamp(max=limit).var(-1) + next_state[10].clamp(max=limit).var(-1)
                 value = value * (goal[..., :2].norm(dim=-1) > 0.1)
             elif kind == "is_terminated":
                 value = self.termination_prob(next_state, goal, labels)
