@@ -99,7 +99,7 @@ class RslRlSuperMimicAlgorithmCfg:
     """Learner iterations in the shared cosine learning-rate schedule."""
 
     lr_decay_iterations_by_optimizer: dict[str, int | None] | None = None
-    """Optional per-optimizer decay lengths; None entries keep those learning rates constant."""
+    """Optional per-optimizer decay lengths, including actor_regression; None entries keep rates constant."""
 
     lr_final_ratio: float = 0.03
     """Final learning rate relative to its initial value."""
@@ -170,6 +170,27 @@ class RslRlSuperMimicAlgorithmCfg:
 
     actor_ema_halflife: int | None = None
     """Optional half-life in actor optimizer steps for passive checkpoint averaging."""
+
+    action_cotangent_clip_ratio: float | None = None
+    """Optional per-step and window action-cotangent limit relative to the survival-weighted median."""
+
+    action_target_step: float | None = None
+    """Optional fixed RMS setpoint step for action-target regression; None keeps direct BPTT."""
+
+    action_target_final_ratio: float = 0.3
+    """Final action-target step relative to its initial value."""
+
+    action_target_decay_iterations: int | None = None
+    """Learner iterations for action-target step decay; None keeps the step constant."""
+
+    action_target_updates: int = 8
+    """Actor-regression optimizer steps per policy update."""
+
+    action_target_batch_size: int = 16384
+    """Rows sampled with replacement per actor-regression step."""
+
+    action_target_learning_rate: float = 6e-4
+    """Initial learning rate of the separate actor-regression Adam."""
 
 
 @configclass
