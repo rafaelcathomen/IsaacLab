@@ -168,7 +168,7 @@ class RslRlSuperMimicAlgorithmCfg:
     actor_grad_clip_value: float | None = 0.1
     """Optional elementwise actor-gradient limit applied after the norm limit."""
 
-    actor_ema_halflife: int | None = None
+    actor_ema_halflife: int | list[int] | None = None
     """Optional half-life in actor optimizer steps for passive checkpoint averaging."""
 
 
