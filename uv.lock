@@ -2171,8 +2171,8 @@ requires-dist = [
     { name = "rich", marker = "extra == 'sb3'" },
     { name = "rl-games", marker = "extra == 'rl-games'", git = "https://github.com/isaac-sim/rl_games.git?rev=5cf4f9ff07e9a01bbefd167cf19b6804b294b51c" },
     { name = "robomimic", marker = "sys_platform == 'linux' and extra == 'mimic'", git = "https://github.com/ARISE-Initiative/robomimic.git?rev=v0.4.0" },
-    { name = "rsl-rl-lib", git = "https://github.com/leggedrobotics/rsl_rl.git?rev=ea39cc2ae4a615c3d70d4ed9055d8b6e3b4c8acd" },
-    { name = "rsl-rl-lib", marker = "extra == 'rsl-rl'", git = "https://github.com/leggedrobotics/rsl_rl.git?rev=ea39cc2ae4a615c3d70d4ed9055d8b6e3b4c8acd" },
+    { name = "rsl-rl-lib", specifier = "==6.0.0" },
+    { name = "rsl-rl-lib", marker = "extra == 'rsl-rl'", specifier = "==6.0.0" },
     { name = "scipy", specifier = ">=1.18.0" },
     { name = "skrl", extras = ["jax"], marker = "extra == 'skrl-jax'", specifier = ">=2.1.1" },
     { name = "skrl", extras = ["torch", "warp"], marker = "extra == 'skrl'", specifier = ">=2.1.1" },
@@ -5208,8 +5208,8 @@ wheels = [
 
 [[package]]
 name = "rsl-rl-lib"
-version = "5.5.2"
-source = { git = "https://github.com/leggedrobotics/rsl_rl.git?rev=ea39cc2ae4a615c3d70d4ed9055d8b6e3b4c8acd#ea39cc2ae4a615c3d70d4ed9055d8b6e3b4c8acd" }
+version = "6.0.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gitpython" },
     { name = "numpy" },
@@ -5218,6 +5218,10 @@ dependencies = [
     { name = "tensorboard" },
     { name = "tensordict" },
     { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/22/75b1ccd1cd0269a33410b05c5f0e4ea10be7d81091536d7155f4b8439e07/rsl_rl_lib-6.0.0.tar.gz", hash = "sha256:897bd85901ea947611bc3e3d65f410acb1a7f0a8b9a5e5f9adc6b546ccc5a0db", size = 86605, upload-time = "2026-11-20T16:37:45.277Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/bf/3ae0152b9b80cd2944bc6f51b687e6f0a3f6ff31dd3db5c56c4b8e6e9e6a/rsl_rl_lib-6.0.0-py3-none-any.whl", hash = "sha256:7d7c19830fa8481470f8969f056548238d4c1217f09ff74493f1becabf2c969b", size = 122393, upload-time = "2026-11-20T16:37:43.904Z" },
 ]
 
 [[package]]

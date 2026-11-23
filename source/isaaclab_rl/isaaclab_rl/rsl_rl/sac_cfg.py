@@ -51,13 +51,13 @@ class RslRlSacAlgorithmCfg:
     num_warmup_transitions: int = 100_000
     """Collected transition count before updates; also sets uniform-action warm-up for a new actor."""
 
-    actor_learning_rate: float = 0.0001
+    actor_learning_rate: float = 0.0003
     """Learning rate for the actor optimizer."""
 
-    critic_learning_rate: float = 0.0001
+    critic_learning_rate: float = 0.0003
     """Learning rate for the critic optimizer."""
 
-    alpha_learning_rate: float = 0.0001
+    alpha_learning_rate: float = 0.0003
     """Learning rate for the entropy-temperature optimizer."""
 
     optimizer: Literal["adam", "adamw", "sgd", "rmsprop"] = "adam"
@@ -119,6 +119,9 @@ class RslRlSacAlgorithmCfg:
 
     use_cuda_graph: bool = False
     """Whether to capture update steps with CUDA graphs; independent of torch_compile_mode."""
+
+    grad_reduce_bucket_mb: float = 25.0
+    """Maximum size in megabytes of each packed gradient buffer reduced across GPUs during multi-GPU training."""
 
 
 @configclass
